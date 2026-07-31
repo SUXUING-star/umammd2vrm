@@ -1,3 +1,4 @@
+# --- START OF FILE step4_toon_calibration.py ---
 import bpy
 
 from utils import safe_set_vrm_prop
@@ -10,6 +11,7 @@ def run():
     except Exception:
         pass
 
+    # 🌟 核心修正：仅保留睫毛、眉毛、眼瞳、半透明等材质的透明度，剔除面部皮肤材质 (face/kao)
     ALLOW_ALPHA_KEYWORDS = [
         "lash",
         "mayu",
@@ -24,6 +26,7 @@ def run():
         "眉",
         "睫",
         "透",
+        "eyeline",
     ]
 
     armature_obj = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
@@ -73,7 +76,6 @@ def run():
                 for kw in ["face", "kao", "skin", "hair", "kami", "顔", "肌", "髪"]
             )
 
-            # 🌟 是否为皮肤、头发或布料材质
             is_skin_or_fabric = is_clothes or is_face_or_hair
 
             v0_mat = getattr(mtoon_ext, "vrm0_material", None)
@@ -86,7 +88,6 @@ def run():
                     if prop.name == "_ShadeColor":
                         safe_set_vrm_prop(prop, "value", (0.9, 0.9, 0.9, 1.0))
                     if prop.name == "_SphereAdd":
-                        # 🌟 核心：如果是衣服、皮肤或头发，MatCap 反射颜色必须强制彻底设为黑色（0.0），屏蔽全局反光
                         if is_skin_or_fabric:
                             safe_set_vrm_prop(prop, "value", (0.0, 0.0, 0.0, 0.0))
                         else:
@@ -115,7 +116,6 @@ def run():
                 if hasattr(v1_mtoon, "gi_equalization_factor"):
                     safe_set_vrm_prop(v1_mtoon, "gi_equalization_factor", 0.7)
                 if hasattr(v1_mtoon, "matcap_color"):
-                    # 🌟 核心：同理，如果是衣服、皮肤或头发，VRM 1.0 的 MatCap 颜色也彻底设为黑色
                     if is_skin_or_fabric:
                         safe_set_vrm_prop(v1_mtoon, "matcap_color", (0.0, 0.0, 0.0))
                     else:

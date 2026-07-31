@@ -1,5 +1,7 @@
-import bpy
 import re
+
+import bpy
+
 
 def auto_assign_vrm_humanoid(armature_obj):
     ext = getattr(armature_obj.data, "vrm_addon_extension", None)
@@ -50,43 +52,116 @@ def auto_assign_vrm_humanoid(armature_obj):
                             hb_item.node.bone_name = candidate
                         break
 
+
 def run():
     ENGLISH_MODEL_NAME = "Mejiro Bright"
     JP_NAME = "メジロブライト"
 
     GARBAGE_BONE_KEYWORDS = [
-        "Pole", "Target", "Handle", "mmd_shadow", "mmd_dummy",
-        "dummy", "shadow", "IK_parent", "eye_control", "_end"
+        "Pole",
+        "Target",
+        "Handle",
+        "mmd_shadow",
+        "mmd_dummy",
+        "dummy",
+        "shadow",
+        "IK_parent",
+        "eye_control",
+        "_end",
     ]
 
     CUSTOM_BONE_MAP = {
-        "Position": "Root", "全ての亲": "Root", "Hip": "Hips", "下半身": "Hips", "hips": "Hips",
-        "Spine": "Spine", "上半身": "Spine", "spine": "Spine", "Chest": "Chest", "上半身2": "Chest",
-        "胸": "Chest", "chest": "Chest", "upperChest": "Chest", "Neck": "Neck", "首": "Neck",
-        "neck": "Neck", "Head": "Head", "頭": "Head", "head": "Head", "Shoulder_L": "ShoulderL",
-        "左肩": "ShoulderL", "leftShoulder": "ShoulderL", "Arm_L": "UpperArmL", "UpperArm_L": "UpperArmL",
-        "左腕": "UpperArmL", "leftUpperArm": "UpperArmL", "Elbow_L": "LowerArmL", "LowerArm_L": "LowerArmL",
-        "左ひじ": "LowerArmL", "leftLowerArm": "LowerArmL", "Wrist_L": "HandL", "Hand_L": "HandL",
-        "左手首": "HandL", "leftHand": "HandL", "Shoulder_R": "ShoulderR", "rightShoulder": "ShoulderR",
-        "Arm_R": "UpperArmR", "UpperArm_R": "UpperArmR", "右腕": "UpperArmR", "rightUpperArm": "UpperArmR",
-        "Elbow_R": "LowerArmR", "LowerArm_R": "LowerArmR", "右ひじ": "LowerArmR", "rightLowerArm": "LowerArmR",
-        "Wrist_R": "HandR", "Hand_R": "HandR", "右手首": "HandR", "rightHand": "HandR", "Thigh_L": "UpperLegL",
-        "Leg_L": "UpperLegL", "左足": "UpperLegL", "leftUpperLeg": "UpperLegL", "Knee_L": "LowerLegL",
-        "左ひざ": "LowerLegL", "leftLowerLeg": "LowerLegL", "Ankle_L": "FootL", "Foot_L": "FootL",
-        "左足首": "FootL", "leftFoot": "FootL", "Toe_L": "ToesL", "左つま先": "ToesL", "leftToes": "ToesL",
-        "Thigh_R": "UpperLegR", "Leg_R": "UpperLegR", "右足": "UpperLegR", "rightUpperLeg": "UpperLegR",
-        "Knee_R": "LowerLegR", "rightLowerLeg": "LowerLegR", "Ankle_R": "FootR", "Foot_R": "FootR",
-        "右足首": "FootR", "rightFoot": "FootR", "Toe_R": "ToesR", "右つま先": "ToesR", "rightToes": "ToesR"
+        "Position": "Root",
+        "全ての亲": "Root",
+        "Hip": "Hips",
+        "下半身": "Hips",
+        "hips": "Hips",
+        "Spine": "Spine",
+        "上半身": "Spine",
+        "spine": "Spine",
+        "Chest": "Chest",
+        "上半身2": "Chest",
+        "胸": "Chest",
+        "chest": "Chest",
+        "upperChest": "Chest",
+        "Neck": "Neck",
+        "首": "Neck",
+        "neck": "Neck",
+        "Head": "Head",
+        "頭": "Head",
+        "head": "Head",
+        "Shoulder_L": "ShoulderL",
+        "左肩": "ShoulderL",
+        "leftShoulder": "ShoulderL",
+        "Arm_L": "UpperArmL",
+        "UpperArm_L": "UpperArmL",
+        "左腕": "UpperArmL",
+        "leftUpperArm": "UpperArmL",
+        "Elbow_L": "LowerArmL",
+        "LowerArm_L": "LowerArmL",
+        "左ひじ": "LowerArmL",
+        "leftLowerArm": "LowerArmL",
+        "Wrist_L": "HandL",
+        "Hand_L": "HandL",
+        "左手首": "HandL",
+        "leftHand": "HandL",
+        "Shoulder_R": "ShoulderR",
+        "rightShoulder": "ShoulderR",
+        "Arm_R": "UpperArmR",
+        "UpperArm_R": "UpperArmR",
+        "右腕": "UpperArmR",
+        "rightUpperArm": "UpperArmR",
+        "Elbow_R": "LowerArmR",
+        "LowerArm_R": "LowerArmR",
+        "右ひじ": "LowerArmR",
+        "rightLowerArm": "LowerArmR",
+        "Wrist_R": "HandR",
+        "Hand_R": "HandR",
+        "右手首": "HandR",
+        "rightHand": "HandR",
+        "Thigh_L": "UpperLegL",
+        "Leg_L": "UpperLegL",
+        "左足": "UpperLegL",
+        "leftUpperLeg": "UpperLegL",
+        "Knee_L": "LowerLegL",
+        "左ひざ": "LowerLegL",
+        "leftLowerLeg": "LowerLegL",
+        "Ankle_L": "FootL",
+        "Foot_L": "FootL",
+        "左足首": "FootL",
+        "leftFoot": "FootL",
+        "Toe_L": "ToesL",
+        "左つま先": "ToesL",
+        "leftToes": "ToesL",
+        "Thigh_R": "UpperLegR",
+        "Leg_R": "UpperLegR",
+        "右足": "UpperLegR",
+        "rightUpperLeg": "UpperLegR",
+        "Knee_R": "LowerLegR",
+        "rightLowerLeg": "LowerLegR",
+        "Ankle_R": "FootR",
+        "Foot_R": "FootR",
+        "右足首": "FootR",
+        "rightFoot": "FootR",
+        "Toe_R": "ToesR",
+        "右つま先": "ToesR",
+        "rightToes": "ToesR",
     }
 
     print(">>> [步骤 1] 规整骨骼命名与层级...")
-    armature_obj = next((obj for obj in bpy.data.objects if obj.type == "ARMATURE"), None)
+    armature_obj = next(
+        (obj for obj in bpy.data.objects if obj.type == "ARMATURE"), None
+    )
     if armature_obj:
         bpy.context.view_layer.objects.active = armature_obj
-        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.object.mode_set(mode="EDIT")
         edit_bones = armature_obj.data.edit_bones
 
-        bones_to_remove = [b.name for b in edit_bones if any(kw in b.name for kw in GARBAGE_BONE_KEYWORDS)]
+        bones_to_remove = [
+            b.name
+            for b in edit_bones
+            if any(kw in b.name for kw in GARBAGE_BONE_KEYWORDS)
+        ]
         for b_name in bones_to_remove:
             if b_name in edit_bones:
                 edit_bones.remove(edit_bones[b_name])
@@ -96,7 +171,7 @@ def run():
         if hips_b and root_b:
             hips_b.parent = root_b
 
-        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.mode_set(mode="OBJECT")
 
         for bone in armature_obj.data.bones:
             if bone.name in CUSTOM_BONE_MAP:
@@ -111,7 +186,7 @@ def run():
         auto_assign_vrm_humanoid(armature_obj)
 
     for obj in bpy.data.objects:
-        if JP_NAME in obj.name and not re.search(r'\.\d+$', obj.name):
+        if JP_NAME in obj.name and not re.search(r"\.\d+$", obj.name):
             obj.name = obj.name.replace(JP_NAME, ENGLISH_MODEL_NAME)
     for mesh in bpy.data.meshes:
         if JP_NAME in mesh.name:
