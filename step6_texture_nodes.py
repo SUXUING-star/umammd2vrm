@@ -3,7 +3,12 @@ import os
 
 import bpy
 
-from utils import safe_set_socket_value, safe_set_vrm_tex
+from utils import (
+    create_mix_color_node,
+    link_mix_inputs,
+    safe_set_socket_value,
+    safe_set_vrm_tex,
+)
 
 
 def load_img(texture_dir, filename):
@@ -19,8 +24,62 @@ def load_img(texture_dir, filename):
     return None
 
 
+def setup_eevee_toon_preview(nodes, links, bsdf, n_lit, n_shad):
+    """
+    通过 Eevee 的 Shader to RGB 实时节点链在 Blender 视口中还原赛马娘卡通渲染。
+    将暖粉色阴影贴图 (shad_c) 与彩色亮面贴图 (lit) 进行光照混合。
+    """
+    try:
+        node_diffuse = nodes.new("ShaderNodeBsdfDiffuse")
+        node_diffuse.location = (-800, -100)
+
+        node_s2rgb = nodes.new("ShaderNodeShaderToRGB")
+        node_s2rgb.location = (-600, -100)
+
+        node_ramp = nodes.new("ShaderNodeValToRGB")
+        node_ramp.location = (-400, -100)
+
+        # 配置阶梯双色过渡，0.5 处硬切边以符合赛马娘卡渲风格
+        elements = node_ramp.color_ramp.elements
+        if len(elements) >= 2:
+            elements[0].position = 0.45
+            elements[0].color = (0.0, 0.0, 0.0, 1.0)
+            elements[1].position = 0.50
+            elements[1].color = (1.0, 1.0, 1.0, 1.0)
+        node_ramp.color_ramp.interpolation = "CONSTANT"
+
+        # 创建版本兼容的 Mix 颜色节点
+        mix_node = create_mix_color_node(nodes)
+        mix_node.location = (-150, 100)
+
+        links.new(node_diffuse.outputs["BSDF"], node_s2rgb.inputs["Shader"])
+        links.new(node_s2rgb.outputs["Color"], node_ramp.inputs["Fac"])
+
+        # 仅连接到自发光通道，防止漫反射叠加
+        emission_s = "Emission Color" if "Emission Color" in bsdf.inputs else "Emission"
+        if emission_s in bsdf.inputs:
+            link_mix_inputs(
+                links,
+                mix_node,
+                node_ramp.outputs["Color"],
+                n_shad.outputs["Color"],
+                n_lit.outputs["Color"],
+                bsdf.inputs[emission_s],
+            )
+
+        # 彻底将 Base Color 封死为纯黑，从物理上阻断 PBR 材质二次漫反射受光产生的过曝
+        safe_set_socket_value(bsdf.inputs["Base Color"], (0.0, 0.0, 0.0, 1.0))
+
+        if "Emission Strength" in bsdf.inputs:
+            safe_set_socket_value(bsdf.inputs["Emission Strength"], 1.0)
+
+    except Exception as e:
+        print(f"      ⚠️ 无法初始化 Blender 实时 Toon 视口混合，fallback 方案启动: {e}")
+        links.new(n_lit.outputs["Color"], bsdf.inputs["Base Color"])
+
+
 def run(texture_dir):
-    print(">>> [步骤 6] 重建纯净材质节点，配置全身无损自发光卡渲视口...")
+    print(">>> [步骤 6] 重建纯净材质节点，映射已解析的多通道贴图...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")
@@ -122,8 +181,7 @@ def run(texture_dir):
             n_eye.image = eye_img
             n_eye.location = (-400, 300)
 
-            # 🌟 强自发光（平照卡渲）：Base Color 设为纯黑，颜色直接连接至自发光，强度设为 1.0
-            safe_set_socket_value(bsdf.inputs["Base Color"], (0.0, 0.0, 0.0, 1.0))
+            links.new(n_eye.outputs["Color"], bsdf.inputs["Base Color"])
 
             emission_s = (
                 "Emission Color" if "Emission Color" in bsdf.inputs else "Emission"
@@ -131,7 +189,7 @@ def run(texture_dir):
             if emission_s in bsdf.inputs:
                 links.new(n_eye.outputs["Color"], bsdf.inputs[emission_s])
             if "Emission Strength" in bsdf.inputs:
-                safe_set_socket_value(bsdf.inputs["Emission Strength"], 1.0)
+                safe_set_socket_value(bsdf.inputs["Emission Strength"], 0.20)
 
             try:
                 mat.blend_method = "CLIP"
@@ -149,7 +207,7 @@ def run(texture_dir):
                         if prop.name == "_MainTex":
                             safe_set_vrm_tex(prop, eye_img)
 
-            print(f"   ✅ 眼睛材质 [{mat.name}] 自发光配置完成！")
+            print(f"   ✅ 眼睛材质 [{mat.name}] 映射完成！")
             continue
 
         # ================= 2. 其他材质 (bdy, face, hair, tail) =================
@@ -161,13 +219,16 @@ def run(texture_dir):
         em_img = part_imgs.get("emissive")
         rfl_img = part_imgs.get("rfl")
 
+        n_lit = None
+        n_shad = None
+
         if lit_img:
             n_lit = nodes.new("ShaderNodeTexImage")
             n_lit.label = "Base Color (lit_color)"
             n_lit.image = lit_img
             n_lit.location = (-500, 300)
 
-            # 剔除了面部材质透明度判定，保证头皮实心；保留睫毛、眼线、眉毛等透明判定
+            # 移除了 ["face", "kao", "脸", "颜"]，让脸部和头皮不接受透明度强制过滤，防止脸直接透明化；但保留眉毛、睫毛和眼眶线的透明度判断
             is_alpha_mesh = any(
                 kw in mat_name
                 for kw in [
@@ -198,25 +259,17 @@ def run(texture_dir):
                 except TypeError:
                     mat.blend_method = "OPAQUE"
 
-        # 🌟 统一配置全身无损自发光平照：
-        # 将彩色亮面贴图直接连入自发光通道，强度设为 1.0，并将 Base Color 设为纯黑。
-        # 这样在 Blender 视口中模型将呈现出绝对干净、没有 3D 投影和二次受光干扰的完美二次元手绘质感。
-        if n_lit:
-            emission_s = (
-                "Emission Color" if "Emission Color" in bsdf.inputs else "Emission"
-            )
-            if emission_s in bsdf.inputs:
-                links.new(n_lit.outputs["Color"], bsdf.inputs[emission_s])
-            if "Emission Strength" in bsdf.inputs:
-                safe_set_socket_value(bsdf.inputs["Emission Strength"], 1.0)
-
-            safe_set_socket_value(bsdf.inputs["Base Color"], (0.0, 0.0, 0.0, 1.0))
-
         if shad_img:
             n_shad = nodes.new("ShaderNodeTexImage")
             n_shad.label = "Shade Color (shad_c)"
             n_shad.image = shad_img
             n_shad.location = (-500, 50)
+
+        # 统一应用实时光照卡渲混合（Shader to RGB）
+        if n_lit and n_shad:
+            setup_eevee_toon_preview(nodes, links, bsdf, n_lit, n_shad)
+        elif n_lit:
+            links.new(n_lit.outputs["Color"], bsdf.inputs["Base Color"])
 
         if sg_img:
             n_sg = nodes.new("ShaderNodeTexImage")
@@ -270,4 +323,4 @@ def run(texture_dir):
                     elif prop.name == "_EmissionMap" and em_img:
                         safe_set_vrm_tex(prop, em_img)
 
-        print(f"   ✅ 材质 [{mat.name}] 已完成自发光平照视口映射！")
+        print(f"   ✅ 材质 [{mat.name}] 已完成通道解析级 MToon 属性映射！")
