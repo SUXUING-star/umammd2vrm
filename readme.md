@@ -1,4 +1,4 @@
-# UmaViewer MMD to VRM 1.0 Converter
+# UmaViewer MMD to VRM 1.0 Converter(Experimental)
 
 This Blender Python script converts MMD models exported from [UmaViewer](https://github.com/katboi01/UmaViewer) into the VRM 1.0 format. 
 
