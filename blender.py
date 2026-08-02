@@ -27,6 +27,6 @@ for m in list(sys.modules.keys()):
 try:
     import main
 
-    main.run(TEXTURE_DIR, ENGLISH_MODEL_NAME, JP_NAME)
+    main.run(TEXTURE_DIR, JP_NAME, ENGLISH_MODEL_NAME)
 except Exception as e:
     print(f"❌ 启动失败: {e}")
