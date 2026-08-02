@@ -1,4 +1,4 @@
-# --- START OF FILE step5_eye_bake.py ---
+# --- START OF FILE step4_eye_bake.py ---
 import os
 
 import bpy
@@ -18,21 +18,87 @@ def run(texture_dir):
     os.makedirs(temp_dir, exist_ok=True)
     print(f"   已建立/确认临时导出文件夹: {temp_dir}")
 
-    # ================= 1. 眼睛高光烘焙 =================
-    eye0_p = os.path.join(texture_dir, "tex_chr1074_30_eye0.png")
-    hi00_p = os.path.join(texture_dir, "tex_chr1074_30_eyehi00.png")
-    hi01_p = os.path.join(texture_dir, "tex_chr1074_30_eyehi01.png")
-    hi02_p = os.path.join(texture_dir, "tex_chr1074_30_eyehi02.png")
+    files = os.listdir(texture_dir)
 
-    if os.path.exists(eye0_p):
+    # ================= 1. 动态匹配眼睛贴图（彻底告别硬编码） =================
+    eye0_file = None
+
+    # A. 模糊检索主眼瞳贴图 (含有 eye 且含有 0 或 base 且不含 hi/highlight)
+    for f in files:
+        fl = f.lower()
+        if "eye" in fl and ("0" in fl or "base" in fl) and "hi" not in fl:
+            eye0_file = f
+            break
+
+    # B. 兜底检索：若未匹配到带有 0 的，寻找任何包含 eye 且不含 hi 的贴图
+    if not eye0_file:
+        for f in files:
+            fl = f.lower()
+            if "eye" in fl and "hi" not in fl:
+                eye0_file = f
+                break
+
+    if eye0_file:
         try:
+            print(f"   🎯 成功识别到当前角色主眼瞳贴图: {eye0_file}")
+            eye0_p = os.path.join(texture_dir, eye0_file)
+
+            # 提取动态命名的前缀 (如从 tex_chr1074_30_eye0.png 提取出 tex_chr1074_30_)
+            prefix = ""
+            for kw in ["eye0", "eye_0", "eye"]:
+                if kw in eye0_file.lower():
+                    idx = eye0_file.lower().rfind(kw)
+                    prefix = eye0_file[:idx]
+                    break
+
+            # 动态拼接并定位对应的三层眼瞳高光贴图
+            hi00_p = None
+            hi01_p = None
+            hi02_p = None
+
+            if prefix:
+                print(f"   📁 提取到当前角色贴图命名主前缀: '{prefix}'")
+                # 尝试基于前缀推导常见命名组合
+                for ext_name in [".png", ".tga", ".jpg"]:
+                    c00 = os.path.join(texture_dir, f"{prefix}eyehi00{ext_name}")
+                    c01 = os.path.join(texture_dir, f"{prefix}eyehi01{ext_name}")
+                    c02 = os.path.join(texture_dir, f"{prefix}eyehi02{ext_name}")
+
+                    if os.path.exists(c00):
+                        hi00_p = c00
+                    if os.path.exists(c01):
+                        hi01_p = c01
+                    if os.path.exists(c02):
+                        hi02_p = c02
+
+            # 兜底检索：若基于前缀没匹配上，进行全局模糊匹配
+            if not hi00_p:
+                for f in files:
+                    fl = f.lower()
+                    if "eyehi00" in fl or ("eye" in fl and "hi" in fl and "00" in fl):
+                        hi00_p = os.path.join(texture_dir, f)
+                        break
+            if not hi01_p:
+                for f in files:
+                    fl = f.lower()
+                    if "eyehi01" in fl or ("eye" in fl and "hi" in fl and "01" in fl):
+                        hi01_p = os.path.join(texture_dir, f)
+                        break
+            if not hi02_p:
+                for f in files:
+                    fl = f.lower()
+                    if "eyehi02" in fl or ("eye" in fl and "hi" in fl and "02" in fl):
+                        hi02_p = os.path.join(texture_dir, f)
+                        break
+
+            # 开始无损合成
             print("   正在进行多层眼睛高光无损混合...")
             base_img = Image.open(eye0_p).convert("RGBA")
             w, h = base_img.size
             base_arr = np.array(base_img, dtype=np.float32)
 
             def process_hi_texture(path):
-                if not os.path.exists(path):
+                if not path or not os.path.exists(path):
                     return None
                 img = Image.open(path).convert("RGB")
                 half_h = h // 2
@@ -70,10 +136,11 @@ def run(texture_dir):
             print("   ✅ 眼睛高光烘焙贴图保存至临时文件夹！")
         except Exception as e:
             print(f"   ⚠️ 眼睛高光烘焙失败: {e}")
+    else:
+        print("   ⚠️ 未在目录中检索到任何眼睛材质贴图，跳过眼睛高光烘焙。")
 
     # ================= 2. 多通道控制贴图拆解并导出至临时文件夹 =================
     parts = ["bdy", "face", "hair", "tail"]
-    files = os.listdir(texture_dir)
 
     def find_file(part_kw, type_kw):
         for f in files:
@@ -110,9 +177,6 @@ def run(texture_dir):
                 sg_out = os.path.join(temp_dir, f"tex_{part}_shading_grade_vrm.png")
                 sg_img.save(sg_out)
 
-                # 🌟 核心修复：绝对不要去乘算或覆盖 diff_arr 的第 4 通道（Alpha）！
-                # 原始 diff 的 Alpha 数据是完好的，直接原样保留即可。
-
             # 保存合成处理后的标准彩色 Lit Color 贴图至临时文件夹（保持原装完美 Alpha 状态）
             out_diff_path = os.path.join(temp_dir, f"tex_{part}_lit_color_vrm.png")
             final_diff_img = Image.fromarray(
@@ -145,4 +209,4 @@ def run(texture_dir):
         except Exception as e:
             print(f"   ⚠️ 部位 [{part}] 通道拆解失败: {e}")
 
-    print("✅ [步骤 5] 所有合成、拆分产生的贴图均已安全存入 vrm_temp_baked 文件夹下！")
+    print("✅ [步骤 4] 所有合成、拆分产生的贴图均已安全存入 vrm_temp_baked 文件夹下！")
