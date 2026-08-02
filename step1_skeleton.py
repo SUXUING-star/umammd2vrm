@@ -53,9 +53,7 @@ def auto_assign_vrm_humanoid(armature_obj):
                         break
 
 
-def run():
-    ENGLISH_MODEL_NAME = "Mejiro Bright"
-    JP_NAME = "メジロブライト"
+def run(jp_model_name, en_model_name):
 
     GARBAGE_BONE_KEYWORDS = [
         "Pole",
@@ -186,15 +184,15 @@ def run():
         auto_assign_vrm_humanoid(armature_obj)
 
     for obj in bpy.data.objects:
-        if JP_NAME in obj.name and not re.search(r"\.\d+$", obj.name):
-            obj.name = obj.name.replace(JP_NAME, ENGLISH_MODEL_NAME)
+        if jp_model_name in obj.name and not re.search(r"\.\d+$", obj.name):
+            obj.name = obj.name.replace(jp_model_name, en_model_name)
     for mesh in bpy.data.meshes:
-        if JP_NAME in mesh.name:
-            mesh.name = mesh.name.replace(JP_NAME, ENGLISH_MODEL_NAME)
+        if jp_model_name in mesh.name:
+            mesh.name = mesh.name.replace(jp_model_name, en_model_name)
     for arm in bpy.data.armatures:
-        if JP_NAME in arm.name:
-            arm.name = arm.name.replace(JP_NAME, ENGLISH_MODEL_NAME)
+        if jp_model_name in arm.name:
+            arm.name = arm.name.replace(jp_model_name, en_model_name)
     for coll in bpy.data.collections:
-        if JP_NAME in coll.name:
-            coll.name = coll.name.replace(JP_NAME, ENGLISH_MODEL_NAME)
+        if jp_model_name in coll.name:
+            coll.name = coll.name.replace(jp_model_name, en_model_name)
     print("✅ [步骤 1] 骨骼与命名处理完成！")

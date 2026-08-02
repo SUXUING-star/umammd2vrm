@@ -7,7 +7,7 @@ from PIL import Image
 
 
 def run(texture_dir):
-    print(">>> [步骤 5] 开始执行多通道贴图分离与自发光烘焙...")
+    print(">>> [步骤 4] 开始执行多通道贴图分离与自发光烘焙...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")

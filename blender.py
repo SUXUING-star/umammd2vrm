@@ -3,6 +3,8 @@ import sys
 
 import bpy
 
+ENGLISH_MODEL_NAME = "Mejiro Bright"
+JP_NAME = "メジロブライト"
 # 1. 贴图存放的绝对路径（在此处集中修改）
 TEXTURE_DIR = r"E:\3dmodels\mejiro bright mizugi\Texture2D"
 
@@ -25,6 +27,6 @@ for m in list(sys.modules.keys()):
 try:
     import main
 
-    main.run(TEXTURE_DIR)
+    main.run(TEXTURE_DIR, ENGLISH_MODEL_NAME, JP_NAME)
 except Exception as e:
     print(f"❌ 启动失败: {e}")
