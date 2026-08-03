@@ -1,32 +1,47 @@
+import json
 import os
 import sys
 
 import bpy
 
-ENGLISH_MODEL_NAME = "Mejiro Bright"
-JP_NAME = "メジロブライト"
-TEXTURE_DIR = r"E:\3dmodels\mejiro bright mizugi\Texture2D"
-SCRIPTS_DIR = "vrm_scripts"
-
-if not bpy.data.is_saved:
-    raise Exception("❌ 请先保存当前的 Blender 工程，以便脚本确定相对路径！")
-
+# 1. 获取当前 .blend 所在目录 (public/<角色名>/)
 blend_dir = bpy.path.abspath("//")
-scripts_dir = os.path.normpath(os.path.join(blend_dir, SCRIPTS_DIR))
 
-# 将外部脚本目录加入系统路径
+# 2. 读取同级 config.json
+config_path = os.path.join(blend_dir, "config.json")
+if not os.path.exists(config_path):
+    raise FileNotFoundError(f"❌ 目录下未找到 config.json: {config_path}")
+
+with open(config_path, "r", encoding="utf-8") as f:
+    config = json.load(f)
+
+# 3. 寻找 src/ 目录并加入 sys.path
+scripts_rel = config.get("scripts_dir", "src")
+project_root = os.path.abspath(os.path.join(blend_dir, "..", ".."))
+scripts_dir = os.path.abspath(os.path.join(project_root, scripts_rel))
+
+# 兜底：若向上两级没找到 src，逐级向上找
+if not os.path.exists(scripts_dir):
+    curr = blend_dir
+    while True:
+        candidate = os.path.join(curr, scripts_rel)
+        if os.path.exists(candidate):
+            scripts_dir = candidate
+            break
+        parent = os.path.dirname(curr)
+        if parent == curr:
+            break
+        curr = parent
+
 if scripts_dir not in sys.path:
     sys.path.insert(0, scripts_dir)
 
-# 强力清理 Blender 中的旧模块缓存，确保外部代码修改后能实时生效
+# 4. 清理模块缓存
 for m in list(sys.modules.keys()):
-    if m == "main" or m.startswith("step") or m == "utils":
+    if m == "main" or m.startswith("step"):
         del sys.modules[m]
 
-# 2. 一键导入并运行
-try:
-    import main
+# 5. 运行主程序
+import main
 
-    main.run(TEXTURE_DIR, JP_NAME, ENGLISH_MODEL_NAME)
-except Exception as e:
-    print(f"❌ 启动失败: {e}")
+main.run(config)
