@@ -4,6 +4,30 @@ import os
 import bpy
 
 
+def force_colorspace(image_obj, target_space):
+    """强效色彩空间同步函数，兼容不同 Blender OCIO 配置"""
+    if not image_obj or not hasattr(image_obj, "colorspace_settings"):
+        return
+    try:
+        valid_names = [
+            elem.identifier
+            for elem in image_obj.colorspace_settings.bl_rna.properties[
+                "name"
+            ].enum_items
+        ]
+        if target_space in valid_names:
+            image_obj.colorspace_settings.name = target_space
+        else:
+            target_clean = target_space.lower().replace("-", "").replace(" ", "")
+            for v_name in valid_names:
+                v_clean = v_name.lower().replace("-", "").replace(" ", "")
+                if target_clean in v_clean:
+                    image_obj.colorspace_settings.name = v_name
+                    break
+    except Exception as e:
+        print(f"⚠️ 设置色彩空间失败 [{image_obj.name} -> {target_space}]: {e}")
+
+
 def load_img(texture_dir, filename, is_data=False):
     temp_path = os.path.join(texture_dir, "vrm_temp_baked", filename)
     if os.path.exists(temp_path):
@@ -13,21 +37,15 @@ def load_img(texture_dir, filename, is_data=False):
 
     if os.path.exists(fpath):
         img = bpy.data.images.load(fpath, check_existing=True)
-        try:
-            # 🌟 核心修复：数据遮罩（Shading Shift, Rim Mask 等）严格指定为 Non-Color
-            if is_data:
-                img.colorspace_settings.name = "Non-Color"
-            else:
-                img.colorspace_settings.name = "sRGB"
-        except Exception:
-            pass
+        target_cs = "Non-Color" if is_data else "sRGB"
+        force_colorspace(img, target_cs)
         img.pack()
         return img
     return None
 
 
 def safe_set_tex_ref(tex_ref_obj, image_obj):
-    if not tex_ref_obj or not image_obj:
+    if not tex_ref_obj:
         return
     try:
         if hasattr(tex_ref_obj, "index") and hasattr(tex_ref_obj.index, "source"):
@@ -62,7 +80,7 @@ def run(texture_dir):
                 return load_img(texture_dir, f, is_data=is_data)
         return None
 
-    # 环境反射 MatCap 贴图 (Color)
+    # 环境反射 MatCap 贴图 (sRGB)
     env_img = load_img(texture_dir, "tex_chr_env000.png") or find_tex(
         "", "rfl", is_data=False
     )
@@ -79,15 +97,16 @@ def run(texture_dir):
                 texture_dir, f"tex_{part}_shade_color_vrm.png", is_data=False
             )
             or find_tex(part, "shad_c", is_data=False),
-            # 🌟 数据遮罩设为 is_data=True
+            # Shading Shift 要求 Non-Color
             "shading_shift": load_img(
                 texture_dir, f"tex_{part}_shading_shift_vrm.png", is_data=True
             ),
             "emissive": load_img(
                 texture_dir, f"tex_{part}_emissive_baked.png", is_data=False
             ),
+            # Rim Multiply Texture 要求 sRGB
             "rim_mask": load_img(
-                texture_dir, f"tex_{part}_rim_mask_vrm.png", is_data=True
+                texture_dir, f"tex_{part}_rim_mask_vrm.png", is_data=False
             ),
         }
 
@@ -125,7 +144,6 @@ def run(texture_dir):
         elif "bdy" in mat_name or "body" in mat_name or "karada" in mat_name:
             part_key = "bdy"
 
-        # 获取材质对应贴图资源
         lit_img, shade_img, shift_img, em_img, rim_img = None, None, None, None, None
         if part_key == "eye":
             lit_img = load_img(
@@ -160,11 +178,15 @@ def run(texture_dir):
             gltf = ext.mtoon1
             gltf.enabled = True
 
-            # 1. Lit Color (主贴图)
+            # 1. Lit Color
             gltf.pbr_metallic_roughness.base_color_factor = (1.0, 1.0, 1.0, 1.0)
             safe_set_tex_ref(gltf.pbr_metallic_roughness.base_color_texture, lit_img)
 
-            # 2. 透明模式
+            # 2. 哑光材质参数
+            gltf.pbr_metallic_roughness.metallic_factor = 0.0
+            gltf.pbr_metallic_roughness.roughness_factor = 1.0
+
+            # 3. 透明模式
             if is_transparent:
                 gltf.alpha_mode = "MASK"
                 gltf.alpha_cutoff = 0.5
@@ -173,34 +195,86 @@ def run(texture_dir):
 
             gltf.double_sided = True
 
-            # 3. Emissive (自发光 - 取自 ctrl 通道 B)
+            # 4. Emissive
             if em_img:
                 safe_set_tex_ref(gltf.emissive_texture, em_img)
                 gltf.emissive_factor = (1.0, 1.0, 1.0)
+            else:
+                safe_set_tex_ref(gltf.emissive_texture, None)
+                gltf.emissive_factor = (0.0, 0.0, 0.0)
 
-            # 4. MToon 卡通着色数据映射
+            # 5. MToon
             mtoon = gltf.extensions.vrmc_materials_mtoon
 
-            # A. 影色贴图：直接关联原生 shad_c 影色图！
+            # A. 影色贴图
             safe_set_tex_ref(mtoon.shade_multiply_texture, shade_img)
             mtoon.shade_color_factor = (1.0, 1.0, 1.0)
 
-            # B. Shading Shift：使用 base R 通道提取的 Non-Color 遮罩贴图
+            # B. Shading Shift
             if shift_img:
                 safe_set_tex_ref(mtoon.shading_shift_texture, shift_img)
                 mtoon.shading_shift_factor = 0.0
 
             mtoon.shading_toony_factor = 0.95
 
-            # C. MatCap 环境反射
-            if env_img:
+            # C. MatCap
+            if env_img and part_key not in ["face", "eye"]:
                 safe_set_tex_ref(mtoon.matcap_texture, env_img)
+            else:
+                safe_set_tex_ref(mtoon.matcap_texture, None)
 
-            # D. Rim 边缘光遮罩 (来自 ctrl 通道 R 的 Non-Color 贴图)
+            # D. Rim 边缘光
             if rim_img:
                 safe_set_tex_ref(mtoon.rim_multiply_texture, rim_img)
-                mtoon.parametric_rim_color_factor = (1.0, 1.0, 1.0)
+                mtoon.parametric_rim_color_factor = (0.3, 0.3, 0.3)
+            else:
+                mtoon.parametric_rim_color_factor = (0.0, 0.0, 0.0)
 
             mtoon.gi_equalization_factor = 0.5
 
-            print(f"   ✅ [MToon 精准映射] 材质 [{mat.name}] 已成功绑定多通道遮罩。")
+            # 🌟🌟🌟 6. 强制纠正所有贴图槽位及节点树中的色彩空间，彻底消除警告 🌟🌟🌟
+            if (
+                hasattr(gltf.pbr_metallic_roughness, "base_color_texture")
+                and gltf.pbr_metallic_roughness.base_color_texture.index.source
+            ):
+                force_colorspace(
+                    gltf.pbr_metallic_roughness.base_color_texture.index.source,
+                    "sRGB",
+                )
+
+            if hasattr(gltf, "emissive_texture") and gltf.emissive_texture.index.source:
+                force_colorspace(gltf.emissive_texture.index.source, "sRGB")
+
+            if (
+                hasattr(mtoon, "shade_multiply_texture")
+                and mtoon.shade_multiply_texture.index.source
+            ):
+                force_colorspace(mtoon.shade_multiply_texture.index.source, "sRGB")
+
+            if (
+                hasattr(mtoon, "shading_shift_texture")
+                and mtoon.shading_shift_texture.index.source
+            ):
+                force_colorspace(mtoon.shading_shift_texture.index.source, "Non-Color")
+
+            if hasattr(mtoon, "matcap_texture") and mtoon.matcap_texture.index.source:
+                force_colorspace(mtoon.matcap_texture.index.source, "sRGB")
+
+            if (
+                hasattr(mtoon, "rim_multiply_texture")
+                and mtoon.rim_multiply_texture.index.source
+            ):
+                force_colorspace(mtoon.rim_multiply_texture.index.source, "sRGB")
+
+            # 遍历材质节点树中的图像节点同步修改
+            if mat.use_nodes and mat.node_tree:
+                for node in mat.node_tree.nodes:
+                    if node.type == "TEX_IMAGE" and node.image:
+                        if "shading_shift" in node.image.name.lower():
+                            force_colorspace(node.image, "Non-Color")
+                        else:
+                            force_colorspace(node.image, "sRGB")
+
+            print(
+                f"   ✅ [MToon 着色完成] 材质 [{mat.name}] 已完成映射与色彩空间校正。"
+            )
