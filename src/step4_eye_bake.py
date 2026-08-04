@@ -1,216 +1,212 @@
-# --- START OF FILE step5_new_texture_nodes.py ---
+# --- START OF FILE step4_eye_bake.py ---
 import os
 
 import bpy
-
-
-def load_img(texture_dir, filename, is_data=False):
-    temp_path = os.path.join(texture_dir, "vrm_temp_baked", filename)
-    if os.path.exists(temp_path):
-        fpath = temp_path
-    else:
-        fpath = os.path.join(texture_dir, filename)
-
-    if os.path.exists(fpath):
-        img = bpy.data.images.load(fpath, check_existing=True)
-        try:
-            if is_data:
-                img.colorspace_settings.name = "Non-Color"
-            else:
-                img.colorspace_settings.name = "sRGB"
-        except Exception:
-            pass
-        img.pack()
-        return img
-    return None
-
-
-def safe_set_tex_ref(tex_ref_obj, image_obj):
-    if not tex_ref_obj:
-        return
-    try:
-        if hasattr(tex_ref_obj, "index") and hasattr(tex_ref_obj.index, "source"):
-            tex_ref_obj.index.source = image_obj
-        elif hasattr(tex_ref_obj, "source"):
-            tex_ref_obj.source = image_obj
-        elif hasattr(tex_ref_obj, "value"):
-            tex_ref_obj.value = image_obj
-    except Exception:
-        pass
+import numpy as np
+from PIL import Image
 
 
 def run(texture_dir):
-    print(">>> [步骤 5] 构建官方 MToon 材质，修复自发光过曝光，关联多通道数据遮罩...")
+    print(">>> [步骤 4] 开始执行多通道贴图分离与自发光烘焙...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")
         return
 
-    files = os.listdir(texture_dir)
+    # 新建专属临时导出文件夹，实现临时生成件与原版资源物理隔离
     temp_dir = os.path.join(texture_dir, "vrm_temp_baked")
-    temp_files = os.listdir(temp_dir) if os.path.exists(temp_dir) else []
+    os.makedirs(temp_dir, exist_ok=True)
+    print(f"   已建立/确认临时导出文件夹: {temp_dir}")
 
-    def find_tex(part_kw, type_kw, is_data=False):
-        for f in temp_files:
+    files = os.listdir(texture_dir)
+
+    # ================= 1. 动态匹配眼睛贴图（彻底告别硬编码） =================
+    eye0_file = None
+
+    # A. 模糊检索主眼瞳贴图 (含有 eye 且含有 0 或 base 且不含 hi/highlight)
+    for f in files:
+        fl = f.lower()
+        if "eye" in fl and ("0" in fl or "base" in fl) and "hi" not in fl:
+            eye0_file = f
+            break
+
+    # B. 兜底检索：若未匹配到带有 0 的，寻找任何包含 eye 且不含 hi 的贴图
+    if not eye0_file:
+        for f in files:
             fl = f.lower()
-            if part_kw in fl and type_kw in fl:
-                return load_img(texture_dir, f, is_data=is_data)
+            if "eye" in fl and "hi" not in fl:
+                eye0_file = f
+                break
+
+    if eye0_file:
+        try:
+            print(f"   🎯 成功识别到当前角色主眼瞳贴图: {eye0_file}")
+            eye0_p = os.path.join(texture_dir, eye0_file)
+
+            # 提取动态命名的前缀 (如从 tex_chr1074_30_eye0.png 提取出 tex_chr1074_30_)
+            prefix = ""
+            for kw in ["eye0", "eye_0", "eye"]:
+                if kw in eye0_file.lower():
+                    idx = eye0_file.lower().rfind(kw)
+                    prefix = eye0_file[:idx]
+                    break
+
+            # 动态拼接并定位对应的三层眼瞳高光贴图
+            hi00_p = None
+            hi01_p = None
+            hi02_p = None
+
+            if prefix:
+                print(f"   📁 提取到当前角色贴图命名主前缀: '{prefix}'")
+                # 尝试基于前缀推导常见命名组合
+                for ext_name in [".png", ".tga", ".jpg"]:
+                    c00 = os.path.join(texture_dir, f"{prefix}eyehi00{ext_name}")
+                    c01 = os.path.join(texture_dir, f"{prefix}eyehi01{ext_name}")
+                    c02 = os.path.join(texture_dir, f"{prefix}eyehi02{ext_name}")
+
+                    if os.path.exists(c00):
+                        hi00_p = c00
+                    if os.path.exists(c01):
+                        hi01_p = c01
+                    if os.path.exists(c02):
+                        hi02_p = c02
+
+            # 兜底检索：若基于前缀没匹配上，进行全局模糊匹配
+            if not hi00_p:
+                for f in files:
+                    fl = f.lower()
+                    if "eyehi00" in fl or ("eye" in fl and "hi" in fl and "00" in fl):
+                        hi00_p = os.path.join(texture_dir, f)
+                        break
+            if not hi01_p:
+                for f in files:
+                    fl = f.lower()
+                    if "eyehi01" in fl or ("eye" in fl and "hi" in fl and "01" in fl):
+                        hi01_p = os.path.join(texture_dir, f)
+                        break
+            if not hi02_p:
+                for f in files:
+                    fl = f.lower()
+                    if "eyehi02" in fl or ("eye" in fl and "hi" in fl and "02" in fl):
+                        hi02_p = os.path.join(texture_dir, f)
+                        break
+
+            # 开始无损合成
+            print("   正在进行多层眼睛高光无损混合...")
+            base_img = Image.open(eye0_p).convert("RGBA")
+            w, h = base_img.size
+            base_arr = np.array(base_img, dtype=np.float32)
+
+            def process_hi_texture(path):
+                if not path or not os.path.exists(path):
+                    return None
+                img = Image.open(path).convert("RGB")
+                half_h = h // 2
+                scaled = img.resize((w, half_h), Image.Resampling.LANCZOS)
+                tiled = Image.new("RGB", (w, h))
+                tiled.paste(scaled, (0, 0))
+                tiled.paste(scaled, (0, half_h))
+                return np.array(tiled, dtype=np.float32)
+
+            hi00_arr = process_hi_texture(hi00_p)
+            hi01_arr = process_hi_texture(hi01_p)
+            hi02_arr = process_hi_texture(hi02_p)
+
+            rgb = base_arr[:, :, :3]
+            if hi02_arr is not None:
+                rgb = rgb + hi02_arr * 0.35
+            if hi00_arr is not None:
+                rgb = rgb + hi00_arr * 0.8
+            if hi01_arr is not None:
+                rgb = rgb + hi01_arr * 0.8
+
+            rgb = np.clip(rgb, 0, 255)
+            base_arr[:, :, :3] = rgb
+
+            baked_img = Image.fromarray(base_arr.astype(np.uint8), mode="RGBA")
+            out_p = os.path.join(temp_dir, "tex_eye_baked_perfect.png")
+            baked_img.save(out_p)
+
+            img_data = bpy.data.images.load(out_p, check_existing=False)
+            try:
+                img_data.colorspace_settings.name = "sRGB"
+            except Exception:
+                pass
+            img_data.pack()
+            print("   ✅ 眼睛高光烘焙贴图保存至临时文件夹！")
+        except Exception as e:
+            print(f"   ⚠️ 眼睛高光烘焙失败: {e}")
+    else:
+        print("   ⚠️ 未在目录中检索到任何眼睛材质贴图，跳过眼睛高光烘焙。")
+
+    # ================= 2. 多通道控制贴图拆解并导出至临时文件夹 =================
+    parts = ["bdy", "face", "hair", "tail"]
+
+    def find_file(part_kw, type_kw):
         for f in files:
             fl = f.lower()
             if part_kw in fl and type_kw in fl:
-                return load_img(texture_dir, f, is_data=is_data)
+                return os.path.join(texture_dir, f)
         return None
 
-    # 环境反射 MatCap 贴图 (sRGB)
-    env_img = load_img(texture_dir, "tex_chr_env000.png") or find_tex(
-        "", "rfl", is_data=False
-    )
-
-    parts = ["bdy", "face", "hair", "tail"]
-    imgs = {}
     for part in parts:
-        imgs[part] = {
-            "lit_color": load_img(
-                texture_dir, f"tex_{part}_lit_color_vrm.png", is_data=False
-            )
-            or find_tex(part, "diff", is_data=False),
-            "shade_color": load_img(
-                texture_dir, f"tex_{part}_shade_color_vrm.png", is_data=False
-            )
-            or find_tex(part, "shad_c", is_data=False),
-            # 🌟 Shading Shift 规范要求 Non-Color
-            "shading_shift": load_img(
-                texture_dir, f"tex_{part}_shading_shift_vrm.png", is_data=True
-            ),
-            "emissive": load_img(
-                texture_dir, f"tex_{part}_emissive_baked.png", is_data=False
-            ),
-            # 🌟 Rim Multiply Texture VRM 规范要求 sRGB (is_data=False)
-            "rim_mask": load_img(
-                texture_dir, f"tex_{part}_rim_mask_vrm.png", is_data=False
-            ),
-        }
+        diff_path = find_file(part, "diff")
+        base_path = find_file(part, "base")
+        ctrl_path = find_file(part, "ctrl")
 
-    ALLOW_ALPHA_KEYWORDS = [
-        "lash",
-        "mayu",
-        "eyelash",
-        "shadow",
-        "dec",
-        "trans",
-        "眉",
-        "睫",
-        "透",
-        "eyeline",
-    ]
-
-    for mat in bpy.data.materials:
-        if not mat:
+        if not diff_path:
             continue
 
-        mat_name = mat.name.lower()
-        is_transparent = any(kw in mat_name for kw in ALLOW_ALPHA_KEYWORDS)
-
-        part_key = None
-        if "eye" in mat_name and not any(
-            kw in mat_name for kw in ["brow", "lash", "line", "shadow"]
-        ):
-            part_key = "eye"
-        elif "mayu" in mat_name or "face" in mat_name or "kao" in mat_name:
-            part_key = "face"
-        elif "hair" in mat_name or "kami" in mat_name:
-            part_key = "hair"
-        elif "tail" in mat_name or "shippo" in mat_name:
-            part_key = "tail"
-        elif "bdy" in mat_name or "body" in mat_name or "karada" in mat_name:
-            part_key = "bdy"
-
-        lit_img, shade_img, shift_img, em_img, rim_img = None, None, None, None, None
-        if part_key == "eye":
-            lit_img = load_img(
-                texture_dir, "tex_eye_baked_perfect.png", is_data=False
-            ) or find_tex("eye", "diff", is_data=False)
-            shade_img = lit_img
-        elif part_key:
-            p_data = imgs.get(part_key, {})
-            lit_img = p_data.get("lit_color")
-            shade_img = p_data.get("shade_color") or lit_img
-            shift_img = p_data.get("shading_shift")
-            em_img = p_data.get("emissive")
-            rim_img = p_data.get("rim_mask")
-
-        if not lit_img:
-            lit_img = find_tex(mat_name, "diff", is_data=False) or find_tex(
-                mat_name, "color", is_data=False
-            )
-            shade_img = find_tex(mat_name, "shad_c", is_data=False) or lit_img
-
-        if not lit_img:
-            continue
-
-        # 转换为 VRM 官方 MToon 材质组
         try:
-            bpy.ops.vrm.add_mtoon_material_group(material_name=mat.name)
+            # 🌟 载入原本彩色、且自带完美 Alpha 透明通道的原始 diff 贴图
+            diff_img = Image.open(diff_path).convert("RGBA")
+            diff_arr = np.array(diff_img, dtype=np.float32)
+
+            # 拆分 base 的通道
+            if base_path:
+                base_img = Image.open(base_path).convert("RGBA")
+                base_arr = np.array(base_img, dtype=np.float32)
+
+                # A. 提取阴影控制（Shading Grade）-> 采用 base 贴图的 R 通道
+                r_chan = base_arr[:, :, 0]
+                sg_arr = np.stack(
+                    [r_chan, r_chan, r_chan, np.ones_like(r_chan) * 255], axis=-1
+                )
+                sg_arr = np.clip(sg_arr, 0, 255).astype(np.uint8)
+                sg_img = Image.fromarray(sg_arr, mode="RGBA")
+                sg_out = os.path.join(temp_dir, f"tex_{part}_shading_grade_vrm.png")
+                sg_img.save(sg_out)
+
+            # 保存合成处理后的标准彩色 Lit Color 贴图至临时文件夹（保持原装完美 Alpha 状态）
+            out_diff_path = os.path.join(temp_dir, f"tex_{part}_lit_color_vrm.png")
+            final_diff_img = Image.fromarray(
+                np.clip(diff_arr, 0, 255).astype(np.uint8), mode="RGBA"
+            )
+            final_diff_img.save(out_diff_path)
+
+            # 拆分 ctrl 的通道并提取自发光
+            if ctrl_path:
+                ctrl_img = Image.open(ctrl_path).convert("RGBA")
+                ctrl_arr = np.array(ctrl_img, dtype=np.float32)
+
+                # 提取 ctrl.b 自发光并与彩色图相乘
+                b_chan_ctrl = ctrl_arr[:, :, 2] / 255.0
+                diff_rgb = diff_arr[:, :, :3]
+                em_rgb = diff_rgb * b_chan_ctrl[:, :, np.newaxis]
+                em_alpha = ctrl_arr[:, :, 2]
+
+                em_arr = np.zeros_like(diff_arr)
+                em_arr[:, :, :3] = em_rgb
+                em_arr[:, :, 3] = em_alpha
+
+                em_img = Image.fromarray(
+                    np.clip(em_arr, 0, 255).astype(np.uint8), mode="RGBA"
+                )
+                em_out = os.path.join(temp_dir, f"tex_{part}_emissive_baked.png")
+                em_img.save(em_out)
+
+            print(f"   ✅ [处理完成] 部位 [{part}] 的贴图已解出并输出到临时目录。")
         except Exception as e:
-            print(f"   ⚠️ MToon 转换警告 [{mat.name}]: {e}")
+            print(f"   ⚠️ 部位 [{part}] 通道拆解失败: {e}")
 
-        ext = getattr(mat, "vrm_addon_extension", None)
-        if ext is not None and hasattr(ext, "mtoon1"):
-            gltf = ext.mtoon1
-            gltf.enabled = True
-
-            # 1. Lit Color (主贴图)
-            gltf.pbr_metallic_roughness.base_color_factor = (1.0, 1.0, 1.0, 1.0)
-            safe_set_tex_ref(gltf.pbr_metallic_roughness.base_color_texture, lit_img)
-
-            # 2. 哑光材质参数
-            gltf.pbr_metallic_roughness.metallic_factor = 0.0
-            gltf.pbr_metallic_roughness.roughness_factor = 1.0
-
-            # 3. 透明模式
-            if is_transparent:
-                gltf.alpha_mode = "MASK"
-                gltf.alpha_cutoff = 0.5
-            else:
-                gltf.alpha_mode = "OPAQUE"
-
-            gltf.double_sided = True
-
-            # 4. Emissive (非发光材质关闭)
-            if em_img:
-                safe_set_tex_ref(gltf.emissive_texture, em_img)
-                gltf.emissive_factor = (1.0, 1.0, 1.0)
-            else:
-                safe_set_tex_ref(gltf.emissive_texture, None)
-                gltf.emissive_factor = (0.0, 0.0, 0.0)
-
-            # 5. MToon 卡通着色数据映射
-            mtoon = gltf.extensions.vrmc_materials_mtoon
-
-            # A. 影色贴图
-            safe_set_tex_ref(mtoon.shade_multiply_texture, shade_img)
-            mtoon.shade_color_factor = (1.0, 1.0, 1.0)
-
-            # B. Shading Shift (阴影偏移遮罩)
-            if shift_img:
-                safe_set_tex_ref(mtoon.shading_shift_texture, shift_img)
-                mtoon.shading_shift_factor = 0.0
-
-            mtoon.shading_toony_factor = 0.95
-
-            # C. MatCap 环境反射：皮肤/眼睛不挂载
-            if env_img and part_key not in ["face", "eye"]:
-                safe_set_tex_ref(mtoon.matcap_texture, env_img)
-            else:
-                safe_set_tex_ref(mtoon.matcap_texture, None)
-
-            # D. Rim 边缘光遮罩 (符合 VRM sRGB 规范)
-            if rim_img:
-                safe_set_tex_ref(mtoon.rim_multiply_texture, rim_img)
-                mtoon.parametric_rim_color_factor = (0.3, 0.3, 0.3)
-            else:
-                mtoon.parametric_rim_color_factor = (0.0, 0.0, 0.0)
-
-            mtoon.gi_equalization_factor = 0.5
-
-            print(f"   ✅ [MToon 着色完成] 材质 [{mat.name}] 已完成映射。")
+    print("✅ [步骤 4] 所有合成、拆分产生的贴图均已安全存入 vrm_temp_baked 文件夹下！")
