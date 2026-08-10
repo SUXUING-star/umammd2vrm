@@ -1,73 +1,144 @@
-# UmaViewer MMD to VRM 1.0 Converter(Experimental)
+# UmaViewer MMD to VRM 1.0 Converter
 
-This Blender Python script converts MMD models exported from [UmaViewer](https://github.com/katboi01/UmaViewer) into the VRM 1.0 format. 
+An automated Blender Python pipeline that converts MMD models exported from [UmaViewer](https://github.com/katboi01/UmaViewer) into fully configured, production-ready **VRM 1.0** avatars.
 
-The script runs entirely inside Blender using Blender's built-in Python. You do not need to install a separate Python environment. It automates bone renaming, humanoid mapping, expression binding, texture processing, and MToon shader setup.
+Running entirely inside Blender's built-in Python environment, the toolkit handles bone renaming, humanoid rigging, shape key cleanup, expression mapping, multi-channel texture/highlight baking, MToon material conversion (with anti-side lighting patches), and metadata embedding.
+
+---
+
+## Workspace Directory Structure
+
+Each model project lives inside its own folder under `public/`, complete with its own `.blend` file, texture directory, and character-specific `config.json`. The pipeline scripts reside in the central `src/` folder.
+
+```text
+vrm_scripts/
+├── blender.py                       # Runner script loaded in Blender Text Editor
+├── readme.md
+├── src/                             # Core execution scripts
+│   ├── main.py                      # Pipeline orchestrator & path resolver
+│   ├── step0_clean.py               # Face normal protection & mesh cleanup
+│   ├── step1_skeleton.py            # Bone renaming & Humanoid auto-mapping
+│   ├── step2_expressions.py         # Shape key prefix cleaning
+│   ├── step3_bind_vrm.py            # VRM expression mapping & morph purging
+│   ├── step4_eye_bake.py            # Non-destructive eye highlight & channel baking
+│   ├── step5_new_texture_nodes.py   # MToon shader construction & lighting tuning
+│   └── step6_metadata.py            # VRM 1.0 metadata writer
+│
+└── public/                          # Model project workspace
+    ├── Agnes digital/
+    │   ├── Agnes Digital.blend
+    │   ├── config.json              # Model-specific config
+    │   └── Texture2D/
+    │
+    ├── mejiro bright mizugi/
+    │   ├── Mejiro Bright mizugi.blend
+    │   ├── config.json              # Model-specific config
+    │   └── Texture2D/
+    │
+    └── <Your Model Folder>/
+        ├── <Your Model>.blend
+        ├── config.json
+        └── Texture2D/
+```
 
 ---
 
 ## Requirements
 
-You need Blender with the following add-ons installed and enabled:
+1. **Blender** (3.6+ or 4.x recommended).
+2. **Add-ons required and enabled:**
+   * **[mmd_tools](https://github.com/powup333/blender_mmd_tools):** For importing and processing `.pmx` models.
+   * **[VRM Add-on for Blender](https://vrm-addon-for-blender.info/en/):** For VRM humanoid mapping, MToon shaders, and exporting `.vrm`.
 
-*   **mmd_tools:** To import and process the MMD model.
-*   **VRM Add-on for Blender:** To map bones, set up expressions, and export the VRM 1.0 file.
+---
 
-### Folder Setup
-Place the script files in a folder named `vrm_scripts` next to your `.blend` file:
+## Per-Model Configuration (`config.json`)
 
-```text
-your_project_folder/
-│
-├── your_model_project.blend
-│
-└── vrm_scripts/          <-- Put the script files here
-    ├── main.py
-    ├── step0_clean.py
-    ├── step1_skeleton.py
-    ├── ...
-    └── utils.py
+Each character directory inside `public/` requires its own `config.json` placed alongside the `.blend` file.
+
+### Example `config.json`
+
+```json
+{
+    "jp_name": "メジロブライト",
+    "en_name": "Mejiro Bright",
+    "texture_dir": "Texture2D",
+    "scripts_dir": "src",
+    "metadata": {
+        "vrm_name": "Mejiro Bright lolita",
+        "version": "1.0.0",
+        "author": "suxing-star",
+        "copyright": "",
+        "contact": "",
+        "reference": "https://hub.vroid.com/en/users/128137342",
+        "third_party_licenses": "None",
+        "other_license_url": "",
+        "thumbnail_path": "",
+        "avatar_permission": "everyone",
+        "allow_excessively_violent_usage": false,
+        "allow_excessively_sexual_usage": false,
+        "commercial_usage": "personalNonProfit",
+        "allow_political_or_religious_usage": false,
+        "allow_antisocial_or_hate_usage": false,
+        "credit_notation": "required",
+        "allow_redistribution": false,
+        "modification": "prohibited"
+    }
+}
 ```
 
----
+### Key Config Fields
 
-## Configuration
-
-Open `blender.py` and update the settings at the top to match your model and paths:
-
-```python
-ENGLISH_MODEL_NAME = "Mejiro Bright"
-JP_NAME = "メジロブライト"
-TEXTURE_DIR = r"E:\3dmodels\mejiro bright mizugi\Texture2D"
-SCRIPTS_DIR = "vrm_scripts"
-```
-
-*   **ENGLISH_MODEL_NAME:** The new English name for your character.
-*   **JP_NAME:** The Japanese name used in the original model files (the script will find and replace this).
-*   **TEXTURE_DIR:** The path to the folder containing your exported textures.
-*   **SCRIPTS_DIR:** The name of the folder where you placed the scripts.
+* **`jp_name`**: The original Japanese character name used in PMX meshes/bones (e.g., `メジロブライト`).
+* **`en_name`**: English replacement name used for objects, meshes, and armatures.
+* **`texture_dir`**: Relative path to the raw exported texture folder (usually `"Texture2D"`).
+* **`metadata`**: VRM 1.0 license, permission settings, author details, and thumbnail relative path.
 
 ---
 
-## How to Use
+## Workflow / How to Run
 
-### Prepare the Model
-Import your `.pmx` model using **mmd_tools**. Select the model meshes, then use **mmd_tools** to convert the materials to Blender's standard **Principled BSDF** nodes.
+1. **Import PMX into Blender:**
+   * Open Blender and import your model `.pmx` using `mmd_tools`.
+   * Convert materials to standard Principled BSDF via `mmd_tools`.
+   * Save the file as a `.blend` file inside its respective directory under `public/` (e.g., `public/mejiro bright mizugi/Mejiro Bright mizugi.blend`).
 
-### Run the Script
-Open Blender's **Text Editor**, paste the code from `blender.py` into a new text block, and run it. The console will show the progress of each step.
+2. **Verify Folder Setup:**
+   * Ensure `config.json` and `Texture2D/` exist in the same directory as your `.blend` file.
 
-### Export the VRM
-Check the bone mappings and expressions in the **VRM Add-on** tab. Make sure the materials look correct, then export your model as a `.vrm` file.
+3. **Run the Script in Blender:**
+   * Switch to Blender's **Text Editor** tab.
+   * Open `blender.py` (or paste its entry snippet).
+   * Click **Run Script** (`Alt + P`).
+
+4. **Export VRM:**
+   * Open the **VRM** tab in the Blender sidebar (`N`).
+   * Verify the humanoid bone mappings, expressions, and metadata.
+   * Click **Export VRM 1.0**.
 
 ---
 
-## What the Scripts Do
+## Pipeline Execution Details
 
-Each script handles a specific part of the conversion:
+The process is divided into modular steps managed by `src/main.py`:
 
-*   **`step0_clean.py` (Mesh Cleanup):** Clears custom split normals to fix lighting bugs and sets the mesh shading to smooth.
-*   **`step1_skeleton.py` (Bone Mapping):** Renames Japanese bone names to English and assigns them to the standard VRM humanoid slots.
-*   **`step2_expressions.py` & `step3_bind_vrm.py` (Expressions):** Cleans up shape key names, links facial shapes to VRM expression presets, and deletes unused morphs to keep the file size small.
-*   **`step4_eye_bake.py` (Textures):** Blends eye highlight textures and extracts shading control maps and emissive textures into a temporary folder.
-*   **`step5_new_texture_nodes.py` (MToon Materials):** Replaces the standard materials with VRM MToon shaders and applies optimal lighting settings for skin, hair, and clothing.
+* **`step0_clean.py` (Mesh & Normal Protection):**
+  Clears custom split normals on body/clothing while protecting original smooth sphere face normals. Removes leftover vertex color masks that cause dark artifacts around mouth corners.
+
+* **`step1_skeleton.py` (Bone & Rig Standardisation):**
+  Removes dummy/MMD garbage bones (`mmd_shadow`, `Pole`, `IK_parent`). Renames Japanese bones to VRM standard names and maps them to VRM 0.x / 1.0 Humanoid bone definitions.
+
+* **`step2_expressions.py` (Shape Key Cleaning):**
+  Strips numeric prefixes (e.g., `001.CloseA` -> `CloseA`) from mesh shape keys.
+
+* **`step3_bind_vrm.py` (Expression Mapping & Unused Morph Purge):**
+  Binds facial shape keys and ear morphs to standard VRM 0.x and 1.0 expression presets (`aa`, `ih`, `ou`, `ee`, `oh`, `blink`, `happy`, `angry`, `sad`, `relaxed`, `surprised`). Deletes redundant shape keys and unused NLA tracks to reduce file size.
+
+* **`step4_eye_bake.py` (Multi-Channel Texture Processing):**
+  Composites eye base textures with up to 3 stacked eye highlight textures (`eyehi00`, `eyehi01`, `eyehi02`). Resolves shading grade maps, extracts emissive channels, and outputs processed textures to `vrm_temp_baked/`.
+
+* **`step5_new_texture_nodes.py` (MToon Shader Setup):**
+  Converts materials to VRM MToon shaders. Configures base color, shade multiply textures, emissive maps, and matcaps. Applies facial shading shift (`-0.25`) and GI equalization (`1.0`) to prevent harsh black rim shadows on VRoid Hub/WebGL renderers.
+
+* **`step6_metadata.py` (VRM 1.0 Metadata Injection):**
+  Injects author info, license rights, usage permissions, and thumbnail images from `config.json` into the VRM 1.0 data structure.
