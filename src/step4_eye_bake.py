@@ -7,30 +7,24 @@ from PIL import Image
 
 
 def run(texture_dir):
-    print(">>> [步骤 4] 开始执行多通道贴图分离与自发光烘焙...")
+    print(">>> [步骤 4] 开始执行多通道数据提取、阴影合成与贴图烘焙...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")
         return
 
-    # 新建专属临时导出文件夹，实现临时生成件与原版资源物理隔离
     temp_dir = os.path.join(texture_dir, "vrm_temp_baked")
     os.makedirs(temp_dir, exist_ok=True)
-    print(f"   已建立/确认临时导出文件夹: {temp_dir}")
 
     files = os.listdir(texture_dir)
 
-    # ================= 1. 动态匹配眼睛贴图（彻底告别硬编码） =================
+    # ================= 1. 眼睛贴图无损高光合成 =================
     eye0_file = None
-
-    # A. 模糊检索主眼瞳贴图 (含有 eye 且含有 0 或 base 且不含 hi/highlight)
     for f in files:
         fl = f.lower()
         if "eye" in fl and ("0" in fl or "base" in fl) and "hi" not in fl:
             eye0_file = f
             break
-
-    # B. 兜底检索：若未匹配到带有 0 的，寻找任何包含 eye 且不含 hi 的贴图
     if not eye0_file:
         for f in files:
             fl = f.lower()
@@ -40,10 +34,7 @@ def run(texture_dir):
 
     if eye0_file:
         try:
-            print(f"   🎯 成功识别到当前角色主眼瞳贴图: {eye0_file}")
             eye0_p = os.path.join(texture_dir, eye0_file)
-
-            # 提取动态命名的前缀 (如从 tex_chr1074_30_eye0.png 提取出 tex_chr1074_30_)
             prefix = ""
             for kw in ["eye0", "eye_0", "eye"]:
                 if kw in eye0_file.lower():
@@ -51,19 +42,12 @@ def run(texture_dir):
                     prefix = eye0_file[:idx]
                     break
 
-            # 动态拼接并定位对应的三层眼瞳高光贴图
-            hi00_p = None
-            hi01_p = None
-            hi02_p = None
-
+            hi00_p, hi01_p, hi02_p = None, None, None
             if prefix:
-                print(f"   📁 提取到当前角色贴图命名主前缀: '{prefix}'")
-                # 尝试基于前缀推导常见命名组合
                 for ext_name in [".png", ".tga", ".jpg"]:
                     c00 = os.path.join(texture_dir, f"{prefix}eyehi00{ext_name}")
                     c01 = os.path.join(texture_dir, f"{prefix}eyehi01{ext_name}")
                     c02 = os.path.join(texture_dir, f"{prefix}eyehi02{ext_name}")
-
                     if os.path.exists(c00):
                         hi00_p = c00
                     if os.path.exists(c01):
@@ -71,28 +55,6 @@ def run(texture_dir):
                     if os.path.exists(c02):
                         hi02_p = c02
 
-            # 兜底检索：若基于前缀没匹配上，进行全局模糊匹配
-            if not hi00_p:
-                for f in files:
-                    fl = f.lower()
-                    if "eyehi00" in fl or ("eye" in fl and "hi" in fl and "00" in fl):
-                        hi00_p = os.path.join(texture_dir, f)
-                        break
-            if not hi01_p:
-                for f in files:
-                    fl = f.lower()
-                    if "eyehi01" in fl or ("eye" in fl and "hi" in fl and "01" in fl):
-                        hi01_p = os.path.join(texture_dir, f)
-                        break
-            if not hi02_p:
-                for f in files:
-                    fl = f.lower()
-                    if "eyehi02" in fl or ("eye" in fl and "hi" in fl and "02" in fl):
-                        hi02_p = os.path.join(texture_dir, f)
-                        break
-
-            # 开始无损合成
-            print("   正在进行多层眼睛高光无损混合...")
             base_img = Image.open(eye0_p).convert("RGBA")
             w, h = base_img.size
             base_arr = np.array(base_img, dtype=np.float32)
@@ -114,15 +76,13 @@ def run(texture_dir):
 
             rgb = base_arr[:, :, :3]
             if hi02_arr is not None:
-                rgb = rgb + hi02_arr * 0.35
+                rgb += hi02_arr * 0.35
             if hi00_arr is not None:
-                rgb = rgb + hi00_arr * 0.8
+                rgb += hi00_arr * 0.8
             if hi01_arr is not None:
-                rgb = rgb + hi01_arr * 0.8
+                rgb += hi01_arr * 0.8
 
-            rgb = np.clip(rgb, 0, 255)
-            base_arr[:, :, :3] = rgb
-
+            base_arr[:, :, :3] = np.clip(rgb, 0, 255)
             baked_img = Image.fromarray(base_arr.astype(np.uint8), mode="RGBA")
             out_p = os.path.join(temp_dir, "tex_eye_baked_perfect.png")
             baked_img.save(out_p)
@@ -133,13 +93,10 @@ def run(texture_dir):
             except Exception:
                 pass
             img_data.pack()
-            print("   ✅ 眼睛高光烘焙贴图保存至临时文件夹！")
         except Exception as e:
             print(f"   ⚠️ 眼睛高光烘焙失败: {e}")
-    else:
-        print("   ⚠️ 未在目录中检索到任何眼睛材质贴图，跳过眼睛高光烘焙。")
 
-    # ================= 2. 多通道控制贴图拆解并导出至临时文件夹 =================
+    # ================= 2. 多通道数据解算（diff, shad_c, base, ctrl, rfl） =================
     parts = ["bdy", "face", "hair", "tail"]
 
     def find_file(part_kw, type_kw):
@@ -150,63 +107,66 @@ def run(texture_dir):
         return None
 
     for part in parts:
-        diff_path = find_file(part, "diff")
-        base_path = find_file(part, "base")
-        ctrl_path = find_file(part, "ctrl")
+        diff_path = find_file(part, "diff") or find_file(part, "base")
+        shad_path = find_file(part, "shad")  # 包含 shad_c 或 shad
+        base_path = find_file(part, "base")  # 包含数据遮罩 (R: Shading Grade)
+        ctrl_path = find_file(part, "ctrl")  # 包含数据遮罩 (B: Emissive)
+        rfl_path = find_file(part, "rfl")  # 包含 MatCap 高光数据
 
         if not diff_path:
             continue
 
         try:
-            # 🌟 载入原本彩色、且自带完美 Alpha 透明通道的原始 diff 贴图
             diff_img = Image.open(diff_path).convert("RGBA")
             diff_arr = np.array(diff_img, dtype=np.float32)
 
-            # 拆分 base 的通道
-            if base_path:
+            # A. 导出的 Lit Color 通道
+            out_diff_path = os.path.join(temp_dir, f"tex_{part}_lit_color_vrm.png")
+            diff_img.save(out_diff_path)
+
+            # B. 阴影贴图 (Shade Color) 解析
+            shade_out = os.path.join(temp_dir, f"tex_{part}_shade_color_vrm.png")
+            if shad_path and os.path.exists(shad_path):
+                # 优先使用提取出的专用阴影色彩贴图 shad_c / shad
+                shad_img = Image.open(shad_path).convert("RGBA")
+                shad_img.save(shade_out)
+            elif base_path and os.path.exists(base_path):
+                # 若无 shad_c，利用 base 贴图的 R 通道 (Shading Grade Map) 与 diff 像素相乘，合成准确阴影
                 base_img = Image.open(base_path).convert("RGBA")
                 base_arr = np.array(base_img, dtype=np.float32)
+                shading_grade = base_arr[:, :, 0] / 255.0  # R Channel Shading Grade
 
-                # A. 提取阴影控制（Shading Grade）-> 采用 base 贴图的 R 通道
-                r_chan = base_arr[:, :, 0]
-                sg_arr = np.stack(
-                    [r_chan, r_chan, r_chan, np.ones_like(r_chan) * 255], axis=-1
+                shade_rgb = diff_arr[:, :, :3] * shading_grade[:, :, np.newaxis]
+                shade_arr = np.dstack([shade_rgb, diff_arr[:, :, 3]])
+                shade_img = Image.fromarray(
+                    np.clip(shade_arr, 0, 255).astype(np.uint8), mode="RGBA"
                 )
-                sg_arr = np.clip(sg_arr, 0, 255).astype(np.uint8)
-                sg_img = Image.fromarray(sg_arr, mode="RGBA")
-                sg_out = os.path.join(temp_dir, f"tex_{part}_shading_grade_vrm.png")
-                sg_img.save(sg_out)
+                shade_img.save(shade_out)
 
-            # 保存合成处理后的标准彩色 Lit Color 贴图至临时文件夹（保持原装完美 Alpha 状态）
-            out_diff_path = os.path.join(temp_dir, f"tex_{part}_lit_color_vrm.png")
-            final_diff_img = Image.fromarray(
-                np.clip(diff_arr, 0, 255).astype(np.uint8), mode="RGBA"
-            )
-            final_diff_img.save(out_diff_path)
-
-            # 拆分 ctrl 的通道并提取自发光
-            if ctrl_path:
+            # C. 提取 ctrl.b 自发光通道
+            if ctrl_path and os.path.exists(ctrl_path):
                 ctrl_img = Image.open(ctrl_path).convert("RGBA")
                 ctrl_arr = np.array(ctrl_img, dtype=np.float32)
 
-                # 提取 ctrl.b 自发光并与彩色图相乘
                 b_chan_ctrl = ctrl_arr[:, :, 2] / 255.0
-                diff_rgb = diff_arr[:, :, :3]
-                em_rgb = diff_rgb * b_chan_ctrl[:, :, np.newaxis]
+                em_rgb = diff_arr[:, :, :3] * b_chan_ctrl[:, :, np.newaxis]
                 em_alpha = ctrl_arr[:, :, 2]
 
-                em_arr = np.zeros_like(diff_arr)
-                em_arr[:, :, :3] = em_rgb
-                em_arr[:, :, 3] = em_alpha
-
+                em_arr = np.dstack([em_rgb, em_alpha])
                 em_img = Image.fromarray(
                     np.clip(em_arr, 0, 255).astype(np.uint8), mode="RGBA"
                 )
                 em_out = os.path.join(temp_dir, f"tex_{part}_emissive_baked.png")
                 em_img.save(em_out)
 
-            print(f"   ✅ [处理完成] 部位 [{part}] 的贴图已解出并输出到临时目录。")
-        except Exception as e:
-            print(f"   ⚠️ 部位 [{part}] 通道拆解失败: {e}")
+            # D. 提取 rfl 通道 (MatCap 高光反射)
+            if rfl_path and os.path.exists(rfl_path):
+                rfl_img = Image.open(rfl_path).convert("RGBA")
+                rfl_out = os.path.join(temp_dir, f"tex_{part}_matcap_vrm.png")
+                rfl_img.save(rfl_out)
 
-    print("✅ [步骤 4] 所有合成、拆分产生的贴图均已安全存入 vrm_temp_baked 文件夹下！")
+            print(f"   ✅ [解算完成] 部位 [{part}] 的通道数据已解出输出到临时目录。")
+        except Exception as e:
+            print(f"   ⚠️ 部位 [{part}] 通道解算失败: {e}")
+
+    print("✅ [步骤 4] 多通道数据拆解与阴影合成完毕！")
