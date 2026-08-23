@@ -33,6 +33,13 @@ def run():
                     break
         return matched
 
+    # 🎯 关键修复：从 WaraiB 中过滤掉所有嘴巴形态（Mouth/kuti/lip），只保留眼睛和眉毛的放松笑意，防止张大嘴
+    relaxed_fun_keys = [
+        k
+        for k in find_keys("WaraiB")
+        if not any(kw in k.lower() for kw in ["mouth", "kuti", "lip", "口"])
+    ]
+
     STANDARD_MAP_VRM0 = {
         "a": find_keys("TalkA_A_L"),
         "i": find_keys("TalkA_I_L"),
@@ -45,7 +52,7 @@ def run():
         "joy": find_keys("WaraiA", "Ear_9_R(Tanosi)", "Ear_9_L(Tanosi)"),
         "angry": find_keys("IkariA", "Ear_8_R(Ikari)", "Ear_8_L(Ikari)"),
         "sorrow": find_keys("KanasiA", "Ear_2_R(Kanasi)", "Ear_2_L(Kanasi)"),
-        "fun": find_keys("WaraiB"),
+        "fun": relaxed_fun_keys,  # 不再包含张嘴形态
     }
 
     STANDARD_MAP_VRM1 = {
@@ -60,11 +67,12 @@ def run():
         "happy": STANDARD_MAP_VRM0["joy"],
         "angry": STANDARD_MAP_VRM0["angry"],
         "sad": STANDARD_MAP_VRM0["sorrow"],
-        "relaxed": STANDARD_MAP_VRM0["fun"],
+        "relaxed": STANDARD_MAP_VRM0["fun"],  # 对应闭嘴/纯眼眉放松
     }
 
     bound_keys_set = set()
 
+    # ================= 绑定 VRM 0.x =================
     if hasattr(ext, "vrm0") and hasattr(ext.vrm0, "blend_shape_master"):
         vrm0_bsm = ext.vrm0.blend_shape_master
         vrm0_groups = vrm0_bsm.blend_shape_groups
@@ -87,6 +95,7 @@ def run():
                     bind.weight = 100.0 if hasattr(bind, "weight") else 1.0
                 bound_keys_set.add(key_name)
 
+        # 额外绑定 surprised 表情
         surprised_keys = find_keys("OdorokiA", "Ear_6_R(Biku)", "Ear_6_L(Biku)")
         if surprised_keys:
             group = vrm0_groups.add()
@@ -103,6 +112,7 @@ def run():
                     bind.weight = 100.0 if hasattr(bind, "weight") else 1.0
                 bound_keys_set.add(key_name)
 
+    # ================= 绑定 VRM 1.0 =================
     if hasattr(ext, "vrm1") and hasattr(ext.vrm1, "expressions"):
         vrm1_p = ext.vrm1.expressions.preset
 
@@ -143,7 +153,7 @@ def run():
         f"✅ [步骤 3/4] 表情与马耳联动绑定成功！已安全保护并记录了 {len(bound_keys_set)} 个表情组件形态键。"
     )
 
-    # ------------------ 自动接续 步骤 3.5 瘦身防卡死清理 ------------------
+    # ------------------ 步骤 3.5 瘦身防卡死清理 ------------------
     print(">>> [步骤 3.5/4] 开始清理未调用的冗余形态键与 NLA 动画...")
 
     for obj in list(bpy.data.objects):

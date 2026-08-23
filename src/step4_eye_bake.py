@@ -1,4 +1,3 @@
-# --- START OF FILE step4_eye_bake.py ---
 import os
 
 import bpy
@@ -96,7 +95,7 @@ def run(texture_dir):
         except Exception as e:
             print(f"   ⚠️ 眼睛高光烘焙失败: {e}")
 
-    # ================= 2. 多通道数据解算（diff, shad_c, base, ctrl, rfl） =================
+    # ================= 2. 多通道数据解算（diff, shad_c, base, ctrl） =================
     parts = ["bdy", "face", "hair", "tail"]
 
     def find_file(part_kw, type_kw):
@@ -111,7 +110,6 @@ def run(texture_dir):
         shad_path = find_file(part, "shad")  # 包含 shad_c 或 shad
         base_path = find_file(part, "base")  # 包含数据遮罩 (R: Shading Grade)
         ctrl_path = find_file(part, "ctrl")  # 包含数据遮罩 (B: Emissive)
-        rfl_path = find_file(part, "rfl")  # 包含 MatCap 高光数据
 
         if not diff_path:
             continue
@@ -127,14 +125,12 @@ def run(texture_dir):
             # B. 阴影贴图 (Shade Color) 解析
             shade_out = os.path.join(temp_dir, f"tex_{part}_shade_color_vrm.png")
             if shad_path and os.path.exists(shad_path):
-                # 优先使用提取出的专用阴影色彩贴图 shad_c / shad
                 shad_img = Image.open(shad_path).convert("RGBA")
                 shad_img.save(shade_out)
             elif base_path and os.path.exists(base_path):
-                # 若无 shad_c，利用 base 贴图的 R 通道 (Shading Grade Map) 与 diff 像素相乘，合成准确阴影
                 base_img = Image.open(base_path).convert("RGBA")
                 base_arr = np.array(base_img, dtype=np.float32)
-                shading_grade = base_arr[:, :, 0] / 255.0  # R Channel Shading Grade
+                shading_grade = base_arr[:, :, 0] / 255.0
 
                 shade_rgb = diff_arr[:, :, :3] * shading_grade[:, :, np.newaxis]
                 shade_arr = np.dstack([shade_rgb, diff_arr[:, :, 3]])
@@ -159,13 +155,7 @@ def run(texture_dir):
                 em_out = os.path.join(temp_dir, f"tex_{part}_emissive_baked.png")
                 em_img.save(em_out)
 
-            # D. 提取 rfl 通道 (MatCap 高光反射)
-            if rfl_path and os.path.exists(rfl_path):
-                rfl_img = Image.open(rfl_path).convert("RGBA")
-                rfl_out = os.path.join(temp_dir, f"tex_{part}_matcap_vrm.png")
-                rfl_img.save(rfl_out)
-
-            print(f"   ✅ [解算完成] 部位 [{part}] 的通道数据已解出输出到临时目录。")
+            print(f"   ✅ [解算完成] 部位 [{part}] 的通道数据已解出。")
         except Exception as e:
             print(f"   ⚠️ 部位 [{part}] 通道解算失败: {e}")
 

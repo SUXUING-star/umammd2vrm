@@ -22,9 +22,7 @@ def load_img(texture_dir, filename):
 
 
 def run(texture_dir):
-    print(
-        ">>> [步骤 5] 将提取的通道数据全自动绑定至 VRM MToon 材质 (含抗 VRoid Hub 死亡侧光配置)..."
-    )
+    print(">>> [步骤 5] 绑定 VRM MToon 材质 (已压低自发光与环境曝光，防闪白过曝)...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")
@@ -38,7 +36,6 @@ def run(texture_dir):
             "lit_color": load_img(texture_dir, f"tex_{part}_lit_color_vrm.png"),
             "shade_color": load_img(texture_dir, f"tex_{part}_shade_color_vrm.png"),
             "emissive": load_img(texture_dir, f"tex_{part}_emissive_baked.png"),
-            "matcap": load_img(texture_dir, f"tex_{part}_matcap_vrm.png"),
         }
 
     ALLOW_ALPHA_KEYWORDS = [
@@ -79,7 +76,6 @@ def run(texture_dir):
         lit_img = None
         shade_img = None
         emissive_img = None
-        matcap_img = None
 
         if part_key == "eye":
             lit_img = load_img(texture_dir, "tex_eye_baked_perfect.png")
@@ -88,7 +84,6 @@ def run(texture_dir):
             lit_img = imgs[part_key]["lit_color"]
             shade_img = imgs[part_key]["shade_color"]
             emissive_img = imgs[part_key]["emissive"]
-            matcap_img = imgs[part_key]["matcap"]
 
         if not lit_img:
             continue
@@ -104,14 +99,16 @@ def run(texture_dir):
             gltf = ext.mtoon1
             gltf.enabled = True
 
-            # 1. 主色与 Lit Color 贴图
+            # 1. 主色 (Base / Lit Color)
             gltf.pbr_metallic_roughness.base_color_factor = (1.0, 1.0, 1.0, 1.0)
             gltf.pbr_metallic_roughness.base_color_texture.index.source = lit_img
 
-            # 2. 绑定自发光 (Emissive)
+            # 2. 自发光 (Emissive) -> 削弱强度至 0.15，防止强光下过载暴白
             if emissive_img:
                 gltf.emissive_texture.index.source = emissive_img
-                gltf.emissive_factor = (1.0, 1.0, 1.0)
+                gltf.emissive_factor = (0.15, 0.15, 0.15)
+            else:
+                gltf.emissive_factor = (0.0, 0.0, 0.0)
 
             # 透明度模式
             if is_transparent:
@@ -125,7 +122,7 @@ def run(texture_dir):
             # 3. 驱动 MToon 着色器参数
             mtoon = gltf.extensions.vrmc_materials_mtoon
 
-            # 【暗部阴影贴图】: 绑定真实 shade_c/合成贴图，因子设为纯白 (1.0, 1.0, 1.0) 保持原色彩
+            # 【暗部阴影贴图】
             if shade_img:
                 mtoon.shade_multiply_texture.index.source = shade_img
                 mtoon.shade_color_factor = (1.0, 1.0, 1.0)
@@ -133,24 +130,20 @@ def run(texture_dir):
                 mtoon.shade_multiply_texture.index.source = lit_img
                 mtoon.shade_color_factor = (0.85, 0.85, 0.85)
 
-            # 【MatCap 高光贴图】
-            if matcap_img:
-                mtoon.matcap_texture.index.source = matcap_img
-
-            # 🎯🎯🎯 核心配置：针对脸部设置抗 VRoid Hub 侧光黑斑的防御参数 🎯🎯🎯
+            # 🎯 彻底根治强光闪白与反射过曝的核心参数调节：
             if part_key == "face":
-                # -0.25 的阴影推移可以让脸部在强侧光下依然保持干净，绝不出黑色斑块
-                mtoon.shading_shift_factor = -0.25
-                mtoon.shading_toony_factor = 0.98
-                # 强制填充环境光，防止暗部出现死黑
-                mtoon.gi_equalization_factor = 1.0
+                mtoon.shading_shift_factor = -0.15  # 适度脸部亮光补偿，不过冲
+                mtoon.shading_toony_factor = 0.90
+                mtoon.gi_equalization_factor = (
+                    0.08  # 降至 0.08，保留微量环境提亮，绝不过曝
+                )
             elif part_key == "hair":
                 mtoon.shading_shift_factor = 0.0
-                mtoon.shading_toony_factor = 0.95
-                mtoon.gi_equalization_factor = 0.5
-            else:
+                mtoon.shading_toony_factor = 0.85
+                mtoon.gi_equalization_factor = 0.0  # 完全关闭环境光加算暴白
+            else:  # bdy (身体/衣服/裙子)
                 mtoon.shading_shift_factor = 0.0
-                mtoon.shading_toony_factor = 0.92
-                mtoon.gi_equalization_factor = 0.5
+                mtoon.shading_toony_factor = 0.85
+                mtoon.gi_equalization_factor = 0.0  # 完全关闭环境光加算暴白
 
-    print("✅ [步骤 5] MToon 材质构建与抗侧光暗部保护全部完成！")
+    print("✅ [步骤 5] 材质抗暴白与柔和光照参数配置完成！")
