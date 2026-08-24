@@ -6,7 +6,7 @@ from PIL import Image
 
 
 def run(texture_dir):
-    print(">>> [步骤 4] 开始执行多通道数据提取、阴影合成与贴图烘焙...")
+    print(">>> [步骤 4] 开始执行多通道数据提取、阴影与推移图烘焙...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")
@@ -107,9 +107,9 @@ def run(texture_dir):
 
     for part in parts:
         diff_path = find_file(part, "diff") or find_file(part, "base")
-        shad_path = find_file(part, "shad")  # 包含 shad_c 或 shad
-        base_path = find_file(part, "base")  # 包含数据遮罩 (R: Shading Grade)
-        ctrl_path = find_file(part, "ctrl")  # 包含数据遮罩 (B: Emissive)
+        shad_path = find_file(part, "shad")
+        base_path = find_file(part, "base")
+        ctrl_path = find_file(part, "ctrl")
 
         if not diff_path:
             continue
@@ -118,20 +118,27 @@ def run(texture_dir):
             diff_img = Image.open(diff_path).convert("RGBA")
             diff_arr = np.array(diff_img, dtype=np.float32)
 
-            # A. 导出的 Lit Color 通道
+            # A. 固有色
             out_diff_path = os.path.join(temp_dir, f"tex_{part}_lit_color_vrm.png")
             diff_img.save(out_diff_path)
 
-            # B. 阴影贴图 (Shade Color) 解析
+            # B. 提取 base.r 阴影推移图
+            if base_path and os.path.exists(base_path):
+                base_img = Image.open(base_path).convert("RGBA")
+                base_arr = np.array(base_img, dtype=np.float32)
+
+                shading_shift_arr = base_arr[:, :, 0].astype(np.uint8)
+                shift_img = Image.fromarray(shading_shift_arr, mode="L")
+                shift_out = os.path.join(temp_dir, f"tex_{part}_shading_shift_vrm.png")
+                shift_img.save(shift_out)
+
+            # C. 阴影贴图 (Shade Color)
             shade_out = os.path.join(temp_dir, f"tex_{part}_shade_color_vrm.png")
             if shad_path and os.path.exists(shad_path):
                 shad_img = Image.open(shad_path).convert("RGBA")
                 shad_img.save(shade_out)
             elif base_path and os.path.exists(base_path):
-                base_img = Image.open(base_path).convert("RGBA")
-                base_arr = np.array(base_img, dtype=np.float32)
                 shading_grade = base_arr[:, :, 0] / 255.0
-
                 shade_rgb = diff_arr[:, :, :3] * shading_grade[:, :, np.newaxis]
                 shade_arr = np.dstack([shade_rgb, diff_arr[:, :, 3]])
                 shade_img = Image.fromarray(
@@ -139,7 +146,7 @@ def run(texture_dir):
                 )
                 shade_img.save(shade_out)
 
-            # C. 提取 ctrl.b 自发光通道
+            # D. 提取自发光
             if ctrl_path and os.path.exists(ctrl_path):
                 ctrl_img = Image.open(ctrl_path).convert("RGBA")
                 ctrl_arr = np.array(ctrl_img, dtype=np.float32)
@@ -147,7 +154,6 @@ def run(texture_dir):
                 b_chan_ctrl = ctrl_arr[:, :, 2] / 255.0
                 em_rgb = diff_arr[:, :, :3] * b_chan_ctrl[:, :, np.newaxis]
                 em_alpha = ctrl_arr[:, :, 2]
-
                 em_arr = np.dstack([em_rgb, em_alpha])
                 em_img = Image.fromarray(
                     np.clip(em_arr, 0, 255).astype(np.uint8), mode="RGBA"
@@ -155,8 +161,8 @@ def run(texture_dir):
                 em_out = os.path.join(temp_dir, f"tex_{part}_emissive_baked.png")
                 em_img.save(em_out)
 
-            print(f"   ✅ [解算完成] 部位 [{part}] 的通道数据已解出。")
+            print(f"   ✅ [解算完成] 部位 [{part}] 通道数据提取完毕。")
         except Exception as e:
             print(f"   ⚠️ 部位 [{part}] 通道解算失败: {e}")
 
-    print("✅ [步骤 4] 多通道数据拆解与阴影合成完毕！")
+    print("✅ [步骤 4] 贴图解算完毕！")

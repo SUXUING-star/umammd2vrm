@@ -3,7 +3,7 @@ import os
 import bpy
 
 
-def load_img(texture_dir, filename):
+def load_img(texture_dir, filename, colorspace="sRGB"):
     temp_path = os.path.join(texture_dir, "vrm_temp_baked", filename)
     if os.path.exists(temp_path):
         fpath = temp_path
@@ -13,7 +13,8 @@ def load_img(texture_dir, filename):
     if os.path.exists(fpath):
         img = bpy.data.images.load(fpath, check_existing=True)
         try:
-            img.colorspace_settings.name = "sRGB"
+            # 根据数据类型严格分配 sRGB 或 Non-Color（消除 VRM 插件色彩空间警告）
+            img.colorspace_settings.name = colorspace
         except Exception:
             pass
         img.pack()
@@ -22,7 +23,7 @@ def load_img(texture_dir, filename):
 
 
 def run(texture_dir):
-    print(">>> [步骤 5] 绑定 VRM MToon 材质 (已压低自发光与环境曝光，防闪白过曝)...")
+    print(">>> [步骤 5] 绑定 VRM MToon 材质 (已规范色彩空间设定，消除非色彩警告)...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")
@@ -33,9 +34,24 @@ def run(texture_dir):
     imgs = {}
     for part in parts:
         imgs[part] = {
-            "lit_color": load_img(texture_dir, f"tex_{part}_lit_color_vrm.png"),
-            "shade_color": load_img(texture_dir, f"tex_{part}_shade_color_vrm.png"),
-            "emissive": load_img(texture_dir, f"tex_{part}_emissive_baked.png"),
+            # 色彩贴图 -> sRGB
+            "lit_color": load_img(
+                texture_dir, f"tex_{part}_lit_color_vrm.png", colorspace="sRGB"
+            ),
+            "shade_color": load_img(
+                texture_dir,
+                f"tex_{part}_shade_color_vrm.png",
+                colorspace="sRGB",
+            ),
+            # 数据推移图 -> Non-Color (消除警告核心)
+            "shading_shift": load_img(
+                texture_dir,
+                f"tex_{part}_shading_shift_vrm.png",
+                colorspace="Non-Color",
+            ),
+            "emissive": load_img(
+                texture_dir, f"tex_{part}_emissive_baked.png", colorspace="sRGB"
+            ),
         }
 
     ALLOW_ALPHA_KEYWORDS = [
@@ -75,20 +91,23 @@ def run(texture_dir):
 
         lit_img = None
         shade_img = None
+        shift_img = None
         emissive_img = None
 
         if part_key == "eye":
-            lit_img = load_img(texture_dir, "tex_eye_baked_perfect.png")
+            lit_img = load_img(
+                texture_dir, "tex_eye_baked_perfect.png", colorspace="sRGB"
+            )
             shade_img = lit_img
         elif part_key and part_key in imgs:
             lit_img = imgs[part_key]["lit_color"]
             shade_img = imgs[part_key]["shade_color"]
+            shift_img = imgs[part_key]["shading_shift"]
             emissive_img = imgs[part_key]["emissive"]
 
         if not lit_img:
             continue
 
-        # 转换为 MToon 节点组结构
         try:
             bpy.ops.vrm.add_mtoon_material_group(material_name=mat.name)
         except Exception as e:
@@ -99,11 +118,11 @@ def run(texture_dir):
             gltf = ext.mtoon1
             gltf.enabled = True
 
-            # 1. 主色 (Base / Lit Color)
+            # 1. 固有色
             gltf.pbr_metallic_roughness.base_color_factor = (1.0, 1.0, 1.0, 1.0)
             gltf.pbr_metallic_roughness.base_color_texture.index.source = lit_img
 
-            # 2. 自发光 (Emissive) -> 削弱强度至 0.15，防止强光下过载暴白
+            # 2. 自发光
             if emissive_img:
                 gltf.emissive_texture.index.source = emissive_img
                 gltf.emissive_factor = (0.15, 0.15, 0.15)
@@ -119,7 +138,7 @@ def run(texture_dir):
 
             gltf.double_sided = True
 
-            # 3. 驱动 MToon 着色器参数
+            # 3. 驱动 MToon 1.0 着色器参数
             mtoon = gltf.extensions.vrmc_materials_mtoon
 
             # 【暗部阴影贴图】
@@ -130,20 +149,33 @@ def run(texture_dir):
                 mtoon.shade_multiply_texture.index.source = lit_img
                 mtoon.shade_color_factor = (0.85, 0.85, 0.85)
 
-            # 🎯 彻底根治强光闪白与反射过曝的核心参数调节：
-            if part_key == "face":
-                mtoon.shading_shift_factor = -0.15  # 适度脸部亮光补偿，不过冲
-                mtoon.shading_toony_factor = 0.90
-                mtoon.gi_equalization_factor = (
-                    0.08  # 降至 0.08，保留微量环境提亮，绝不过曝
-                )
-            elif part_key == "hair":
-                mtoon.shading_shift_factor = 0.0
-                mtoon.shading_toony_factor = 0.85
-                mtoon.gi_equalization_factor = 0.0  # 完全关闭环境光加算暴白
-            else:  # bdy (身体/衣服/裙子)
-                mtoon.shading_shift_factor = 0.0
-                mtoon.shading_toony_factor = 0.85
-                mtoon.gi_equalization_factor = 0.0  # 完全关闭环境光加算暴白
+            # 【阴影推移图 (Non-Color)】
+            if shift_img:
+                mtoon.shading_shift_texture.index.source = shift_img
+                if hasattr(mtoon.shading_shift_texture, "scale"):
+                    mtoon.shading_shift_texture.scale = 1.0
 
-    print("✅ [步骤 5] 材质抗暴白与柔和光照参数配置完成！")
+            # 材质参数
+            if part_key == "face":
+                mtoon.shading_shift_factor = -0.15
+                mtoon.shading_toony_factor = 0.88
+                mtoon.gi_equalization_factor = 0.08
+            elif part_key == "hair":
+                mtoon.shading_shift_factor = -0.05
+                mtoon.shading_toony_factor = 0.75
+                mtoon.gi_equalization_factor = 0.0
+            else:  # bdy
+                mtoon.shading_shift_factor = -0.05
+                mtoon.shading_toony_factor = 0.68
+                mtoon.gi_equalization_factor = 0.0
+
+            # 描边配置
+            if part_key in ["eye", "face"] or is_transparent:
+                mtoon.outline_width_mode = "none"
+            else:
+                mtoon.outline_width_mode = "worldCoordinates"
+                mtoon.outline_width_factor = 0.0010
+                mtoon.outline_color_factor = (0.05, 0.02, 0.02)
+                mtoon.outline_lighting_mix_factor = 0.5
+
+    print("✅ [步骤 5] 材质与色彩空间配置完成！")
