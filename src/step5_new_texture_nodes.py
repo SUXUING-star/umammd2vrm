@@ -13,7 +13,7 @@ def load_img(texture_dir, filename, colorspace="sRGB"):
     if os.path.exists(fpath):
         img = bpy.data.images.load(fpath, check_existing=True)
         try:
-            # 根据数据类型严格分配 sRGB 或 Non-Color（消除 VRM 插件色彩空间警告）
+            # 严格规范色彩空间：色彩图用 sRGB，数据推移图用 Non-Color
             img.colorspace_settings.name = colorspace
         except Exception:
             pass
@@ -23,7 +23,7 @@ def load_img(texture_dir, filename, colorspace="sRGB"):
 
 
 def run(texture_dir):
-    print(">>> [步骤 5] 绑定 VRM MToon 材质 (已规范色彩空间设定，消除非色彩警告)...")
+    print(">>> [步骤 5] 绑定 VRM MToon 材质 (已彻底关闭法线挤出描边，杜绝黑斑黑条)...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")
@@ -34,7 +34,6 @@ def run(texture_dir):
     imgs = {}
     for part in parts:
         imgs[part] = {
-            # 色彩贴图 -> sRGB
             "lit_color": load_img(
                 texture_dir, f"tex_{part}_lit_color_vrm.png", colorspace="sRGB"
             ),
@@ -43,7 +42,6 @@ def run(texture_dir):
                 f"tex_{part}_shade_color_vrm.png",
                 colorspace="sRGB",
             ),
-            # 数据推移图 -> Non-Color (消除警告核心)
             "shading_shift": load_img(
                 texture_dir,
                 f"tex_{part}_shading_shift_vrm.png",
@@ -74,7 +72,7 @@ def run(texture_dir):
         mat_name = mat.name.lower()
         is_transparent = any(kw in mat_name for kw in ALLOW_ALPHA_KEYWORDS)
 
-        # 匹配对应部位
+        # 匹配对应部位主贴图
         part_key = None
         if "eye" in mat_name and not any(
             kw in mat_name for kw in ["brow", "lash", "line", "shadow"]
@@ -118,11 +116,11 @@ def run(texture_dir):
             gltf = ext.mtoon1
             gltf.enabled = True
 
-            # 1. 固有色
+            # 1. 固有色 (Lit Color)
             gltf.pbr_metallic_roughness.base_color_factor = (1.0, 1.0, 1.0, 1.0)
             gltf.pbr_metallic_roughness.base_color_texture.index.source = lit_img
 
-            # 2. 自发光
+            # 2. 自发光 (Emissive)
             if emissive_img:
                 gltf.emissive_texture.index.source = emissive_img
                 gltf.emissive_factor = (0.15, 0.15, 0.15)
@@ -155,7 +153,7 @@ def run(texture_dir):
                 if hasattr(mtoon.shading_shift_texture, "scale"):
                     mtoon.shading_shift_texture.scale = 1.0
 
-            # 材质参数
+            # 材质分部精调
             if part_key == "face":
                 mtoon.shading_shift_factor = -0.15
                 mtoon.shading_toony_factor = 0.88
@@ -164,18 +162,12 @@ def run(texture_dir):
                 mtoon.shading_shift_factor = -0.05
                 mtoon.shading_toony_factor = 0.75
                 mtoon.gi_equalization_factor = 0.0
-            else:  # bdy
+            else:  # bdy (衣服、身体)
                 mtoon.shading_shift_factor = -0.05
                 mtoon.shading_toony_factor = 0.68
                 mtoon.gi_equalization_factor = 0.0
 
-            # 描边配置
-            if part_key in ["eye", "face"] or is_transparent:
-                mtoon.outline_width_mode = "none"
-            else:
-                mtoon.outline_width_mode = "worldCoordinates"
-                mtoon.outline_width_factor = 0.0010
-                mtoon.outline_color_factor = (0.05, 0.02, 0.02)
-                mtoon.outline_lighting_mix_factor = 0.5
+            # 🎯 彻底全局关闭 Inverted-Hull 描边，杜绝任何黑斑、黑坨与褶皱粗黑条
+            mtoon.outline_width_mode = "none"
 
-    print("✅ [步骤 5] 材质与色彩空间配置完成！")
+    print("✅ [步骤 5] 材质配置完毕，已彻底杜绝描边黑斑瑕疵！")
