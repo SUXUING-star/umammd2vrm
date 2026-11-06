@@ -1,6 +1,4 @@
-抱歉，以为你需要中文。以下是去 AI 味、精简且更新了文件名的纯英文 `README.md`：
 
-```markdown
 # UmaViewer MMD to VRM 1.0 Converter
 
 A Blender Python pipeline for converting MMD models exported from [UmaViewer](https://github.com/katboi01/UmaViewer) into VRM 1.0 avatars.
