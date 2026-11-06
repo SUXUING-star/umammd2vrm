@@ -98,4 +98,3 @@ Each character directory in `public/` requires a `config.json` next to the `.ble
 * **`step4_bake_texture.py`**: Bakes stacked eye highlights and packs texture channels into `vrm_temp_baked/`.
 * **`step5_mtoon_materials.py`**: Converts materials to MToon shaders and adjusts face shading offsets and GI strength.
 * **`step6_metadata.py`**: Writes license, author, and permission fields into the VRM 1.0 metadata.
-```
