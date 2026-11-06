@@ -23,7 +23,7 @@ def load_img(texture_dir, filename, colorspace="sRGB"):
 
 
 def run(texture_dir):
-    print(">>> [步骤 5] 绑定 VRM MToon 材质 (已彻底关闭法线挤出描边，杜绝黑斑黑条)...")
+    print(">>> [步骤 5] 绑定 VRM MToon 材质 (已根据 HLSL 硬切与 Step 参数对齐)...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")
@@ -123,7 +123,7 @@ def run(texture_dir):
             # 2. 自发光 (Emissive)
             if emissive_img:
                 gltf.emissive_texture.index.source = emissive_img
-                gltf.emissive_factor = (0.15, 0.15, 0.15)
+                gltf.emissive_factor = (1.0, 1.0, 1.0)
             else:
                 gltf.emissive_factor = (0.0, 0.0, 0.0)
 
@@ -145,7 +145,7 @@ def run(texture_dir):
                 mtoon.shade_color_factor = (1.0, 1.0, 1.0)
             else:
                 mtoon.shade_multiply_texture.index.source = lit_img
-                mtoon.shade_color_factor = (0.85, 0.85, 0.85)
+                mtoon.shade_color_factor = (0.72, 0.70, 0.80)
 
             # 【阴影推移图 (Non-Color)】
             if shift_img:
@@ -153,21 +153,25 @@ def run(texture_dir):
                 if hasattr(mtoon.shading_shift_texture, "scale"):
                     mtoon.shading_shift_texture.scale = 1.0
 
-            # 材质分部精调
+            # -------------------------------------------------------------
+            # 【HLSL 核心修复】：精调数值对齐 HLSL 阴影参数
+            # Face: HLSL _ToonStep=0.5, _ToonFeather=0.0001 (极高硬度切边)
+            # Hair/Body: HLSL _ToonStep=0.4, _ToonFeather=0.001
+            # -------------------------------------------------------------
             if part_key == "face":
-                mtoon.shading_shift_factor = -0.15
-                mtoon.shading_toony_factor = 0.88
-                mtoon.gi_equalization_factor = 0.08
+                mtoon.shading_shift_factor = -0.10
+                mtoon.shading_toony_factor = 0.98  # 对齐 0.0001 羽化
+                mtoon.gi_equalization_factor = 0.0
             elif part_key == "hair":
                 mtoon.shading_shift_factor = -0.05
-                mtoon.shading_toony_factor = 0.75
+                mtoon.shading_toony_factor = 0.95  # 对齐 0.001 羽化
                 mtoon.gi_equalization_factor = 0.0
             else:  # bdy (衣服、身体)
                 mtoon.shading_shift_factor = -0.05
-                mtoon.shading_toony_factor = 0.68
+                mtoon.shading_toony_factor = 0.92
                 mtoon.gi_equalization_factor = 0.0
 
-            # 🎯 彻底全局关闭 Inverted-Hull 描边，杜绝任何黑斑、黑坨与褶皱粗黑条
+            # 关闭描边
             mtoon.outline_width_mode = "none"
 
-    print("✅ [步骤 5] 材质配置完毕，已彻底杜绝描边黑斑瑕疵！")
+    print("✅ [步骤 5] 材质配置完毕，已按 HLSL 数学公式完成参数对齐！")

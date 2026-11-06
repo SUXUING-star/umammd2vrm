@@ -6,8 +6,8 @@ import step0_clean
 import step1_skeleton
 import step2_expressions
 import step3_bind_vrm
-import step4_eye_bake
-import step5_new_texture_nodes
+import step4_bake_texture
+import step5_mtoon_materials
 import step6_metadata
 
 
@@ -61,8 +61,8 @@ def run(config):
     step1_skeleton.run(jp, en)  # 执行改名主逻辑
     step2_expressions.run()
     step3_bind_vrm.run()
-    step4_eye_bake.run(tex)
-    step5_new_texture_nodes.run(tex)
+    step4_bake_texture.run(tex)
+    step5_mtoon_materials.run(tex)
 
     # 传入规整后的 config 给 metadata 步骤
     step6_metadata.run(config)

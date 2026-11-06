@@ -6,7 +6,7 @@ from PIL import Image
 
 
 def run(texture_dir):
-    print(">>> [步骤 4] 开始执行多通道数据提取、阴影与推移图烘焙...")
+    print(">>> [步骤 4] 开始根据 HLSL 渲染方程解算多通道贴图与阴影烘焙...")
 
     if not os.path.exists(texture_dir):
         print(f"❌ 贴图目录不存在: {texture_dir}")
@@ -17,7 +17,7 @@ def run(texture_dir):
 
     files = os.listdir(texture_dir)
 
-    # ================= 1. 眼睛贴图无损高光合成 =================
+    # ================= 1. 眼睛贴图：HLSL 阈值截断加法合成 (HLSL Eye Frag) =================
     eye0_file = None
     for f in files:
         fl = f.lower()
@@ -74,12 +74,27 @@ def run(texture_dir):
             hi02_arr = process_hi_texture(hi02_p)
 
             rgb = base_arr[:, :, :3]
-            if hi02_arr is not None:
-                rgb += hi02_arr * 0.35
-            if hi00_arr is not None:
-                rgb += hi00_arr * 0.8
-            if hi01_arr is not None:
-                rgb += hi01_arr * 0.8
+
+            # -------------------------------------------------------------
+            # 【HLSL 核心修复】：还原 Eye PS 阶段高光门限截断计算
+            # HLSL 公式: r1.x = hi * weight - _Limit (默认 0.1)
+            #           r0.y = max(0, step(0, r1.x) * r1.x)
+            # -------------------------------------------------------------
+            LIMIT = 0.1 * 255.0  # 映射到 0-255 空间
+
+            def apply_hlsl_eye_hi_threshold(base_rgb, hi_arr, weight):
+                if hi_arr is None:
+                    return base_rgb
+                # 提取单通道灰度 * 权重
+                hi_val = hi_arr[:, :, 0] * weight
+                # 减去 _Limit 截断门限，小于 0 的强行归零
+                hi_val = np.maximum(0.0, hi_val - LIMIT)
+                # 加色混合到基色
+                return base_rgb + hi_val[:, :, np.newaxis]
+
+            rgb = apply_hlsl_eye_hi_threshold(rgb, hi02_arr, 0.35)
+            rgb = apply_hlsl_eye_hi_threshold(rgb, hi00_arr, 0.80)
+            rgb = apply_hlsl_eye_hi_threshold(rgb, hi01_arr, 0.80)
 
             base_arr[:, :, :3] = np.clip(rgb, 0, 255)
             baked_img = Image.fromarray(base_arr.astype(np.uint8), mode="RGBA")
@@ -110,6 +125,7 @@ def run(texture_dir):
         shad_path = find_file(part, "shad")
         base_path = find_file(part, "base")
         ctrl_path = find_file(part, "ctrl")
+        emiss_path = find_file(part, "emissive") or find_file(part, "emi")
 
         if not diff_path:
             continue
@@ -118,11 +134,12 @@ def run(texture_dir):
             diff_img = Image.open(diff_path).convert("RGBA")
             diff_arr = np.array(diff_img, dtype=np.float32)
 
-            # A. 固有色
+            # A. 固有色 (Lit Color)
             out_diff_path = os.path.join(temp_dir, f"tex_{part}_lit_color_vrm.png")
             diff_img.save(out_diff_path)
 
-            # B. 提取 base.r 阴影推移图
+            # B. 提取 base.r 阴影推移图 (Shading Shift)
+            # HLSL 物理含义: base.r 是 HalfLambert 的乘算系数 (1.0=受光, 0.0=锁死阴影)
             if base_path and os.path.exists(base_path):
                 base_img = Image.open(base_path).convert("RGBA")
                 base_arr = np.array(base_img, dtype=np.float32)
@@ -135,29 +152,33 @@ def run(texture_dir):
             # C. 阴影贴图 (Shade Color)
             shade_out = os.path.join(temp_dir, f"tex_{part}_shade_color_vrm.png")
             if shad_path and os.path.exists(shad_path):
+                # 存在官方暗部贴图 (shad_c) 时直接使用
                 shad_img = Image.open(shad_path).convert("RGBA")
                 shad_img.save(shade_out)
-            elif base_path and os.path.exists(base_path):
-                shading_grade = base_arr[:, :, 0] / 255.0
-                shade_rgb = diff_arr[:, :, :3] * shading_grade[:, :, np.newaxis]
+            else:
+                # -------------------------------------------------------------
+                # 【HLSL 核心修复】：缺失 shad_c 时的降级阴影公式
+                # 修正：绝不能拿 base.r 乘 diff！改为应用 HLSL 的冷色调压暗矩阵
+                # -------------------------------------------------------------
+                cool_dark_tint = np.array(
+                    [0.72, 0.70, 0.80], dtype=np.float32
+                )  # HLSL _ToonDarkColor 默认冷灰色调
+                shade_rgb = (
+                    diff_arr[:, :, :3] * cool_dark_tint[np.newaxis, np.newaxis, :]
+                )
                 shade_arr = np.dstack([shade_rgb, diff_arr[:, :, 3]])
                 shade_img = Image.fromarray(
                     np.clip(shade_arr, 0, 255).astype(np.uint8), mode="RGBA"
                 )
                 shade_img.save(shade_out)
 
-            # D. 提取自发光
-            if ctrl_path and os.path.exists(ctrl_path):
-                ctrl_img = Image.open(ctrl_path).convert("RGBA")
-                ctrl_arr = np.array(ctrl_img, dtype=np.float32)
-
-                b_chan_ctrl = ctrl_arr[:, :, 2] / 255.0
-                em_rgb = diff_arr[:, :, :3] * b_chan_ctrl[:, :, np.newaxis]
-                em_alpha = ctrl_arr[:, :, 2]
-                em_arr = np.dstack([em_rgb, em_alpha])
-                em_img = Image.fromarray(
-                    np.clip(em_arr, 0, 255).astype(np.uint8), mode="RGBA"
-                )
+            # D. 自发光 (Emissive)
+            # -------------------------------------------------------------
+            # 【HLSL 核心修复】：纠正 OptionMask.b 不是自发光 Mask 的错误
+            # HLSL 中自发光独立采样 _EmissiveTex。若不存在则不生成假自发光
+            # -------------------------------------------------------------
+            if emiss_path and os.path.exists(emiss_path):
+                em_img = Image.open(emiss_path).convert("RGBA")
                 em_out = os.path.join(temp_dir, f"tex_{part}_emissive_baked.png")
                 em_img.save(em_out)
 
