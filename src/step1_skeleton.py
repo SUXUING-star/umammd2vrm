@@ -3,6 +3,10 @@ import re
 import bpy
 
 
+def to_snake_case(name: str) -> str:
+    return re.sub(r"([A-Z])", r"_\1", name).lower()
+
+
 def auto_assign_vrm_humanoid(armature_obj):
     ext = getattr(armature_obj.data, "vrm_addon_extension", None)
     if not ext:
@@ -44,13 +48,20 @@ def auto_assign_vrm_humanoid(armature_obj):
     if hasattr(ext, "vrm1") and hasattr(ext.vrm1, "humanoid"):
         h_bones = ext.vrm1.humanoid.human_bones
         for attr_name, candidates in mapping.items():
-            if hasattr(h_bones, attr_name):
-                hb_item = getattr(h_bones, attr_name)
-                for candidate in candidates:
-                    if candidate in armature_obj.data.bones:
-                        if hasattr(hb_item, "node"):
-                            hb_item.node.bone_name = candidate
-                        break
+            snake_attr = to_snake_case(attr_name)
+            target_attr = (
+                attr_name
+                if hasattr(h_bones, attr_name)
+                else (snake_attr if hasattr(h_bones, snake_attr) else None)
+            )
+            if not target_attr:
+                continue
+            hb_item = getattr(h_bones, target_attr)
+            for candidate in candidates:
+                if candidate in armature_obj.data.bones:
+                    if hasattr(hb_item, "node"):
+                        hb_item.node.bone_name = candidate
+                    break
 
 
 def run(jp_model_name, en_model_name):

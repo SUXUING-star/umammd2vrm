@@ -4,7 +4,7 @@ import bpy
 
 
 def run(config):
-    print(">>> [步骤 6] 写入 VRM 1.0 元数据...")
+    print(">>> [步骤 6] 写入 VRM 1.0 元数据并导出 VRM...")
 
     armature = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
     if not armature:
@@ -15,13 +15,13 @@ def run(config):
     meta = armature.data.vrm_addon_extension.vrm1.meta
 
     # 从 JSON 的 metadata 块读取
-    d = config["metadata"]
+    d = config.get("metadata", {})
 
     # --- 基础字段 ---
     meta.vrm_name = d.get("vrm_name", config["en_name"])
     meta.version = d.get("version", "1.0.0")
     meta.copyright_information = d.get("copyright_information", "")
-    meta.contact_information = d.get("contact_information", "")  # 补上了！
+    meta.contact_information = d.get("contact_information", "")
     meta.third_party_licenses = d.get("third_party_licenses", "")
     meta.other_license_url = d.get("other_license_url", "")
 
@@ -31,9 +31,11 @@ def run(config):
 
     # --- 参考 (Collection) ---
     meta.references.clear()
-    meta.references.add().value = d.get("reference", "")
+    ref_val = d.get("reference", "")
+    if ref_val:
+        meta.references.add().value = ref_val
 
-    # --- 权限 (完全对应文档 Enum) ---
+    # --- 权限 ---
     meta.avatar_permission = d.get("avatar_permission", "everyone")
     meta.allow_excessively_violent_usage = d.get(
         "allow_excessively_violent_usage", False
@@ -55,3 +57,26 @@ def run(config):
         meta.thumbnail_image = img
 
     print("✅ [步骤 6] 元数据写入完成。")
+
+    # --- 导出 VRM（有 VRMA 动作时自动开启 glTF 动画导出） ---
+    models_dir = config.get("models_dir")
+    if models_dir:
+        os.makedirs(models_dir, exist_ok=True)
+        out_vrm = os.path.join(models_dir, f"{config['en_name']}.vrm")
+        has_vrma = bool(
+            config.get("vrma_path")
+            or (
+                isinstance(config.get("vrma_paths"), list)
+                and any(config.get("vrma_paths"))
+            )
+        )
+        res = bpy.ops.export_scene.vrm(
+            filepath=out_vrm,
+            armature_object_name=armature.name,
+            enable_advanced_preferences=has_vrma,
+            export_gltf_animations=has_vrma,
+        )
+        if res == {"FINISHED"}:
+            print(f"✅ [步骤 6] VRM 已导出至: {out_vrm} (内嵌动画: {has_vrma})")
+        else:
+            print(f"⚠️ [步骤 6] VRM 导出失败: {res}")

@@ -4,3 +4,4 @@ blenders/
 models/
 public/
 src/__pycache__
+.env
