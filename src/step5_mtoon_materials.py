@@ -147,28 +147,24 @@ def run(texture_dir):
                 mtoon.shade_multiply_texture.index.source = lit_img
                 mtoon.shade_color_factor = (0.72, 0.70, 0.80)
 
-            # 【阴影推移图 (Non-Color)】
-            if shift_img:
+            # 【阴影推移图 (Non-Color)】：脸部不绑定推移图，其他部位只给 0.25 柔和权重
+            if shift_img and part_key != "face":
                 mtoon.shading_shift_texture.index.source = shift_img
                 if hasattr(mtoon.shading_shift_texture, "scale"):
-                    mtoon.shading_shift_texture.scale = 1.0
+                    mtoon.shading_shift_texture.scale = 0.25
 
-            # -------------------------------------------------------------
-            # 【HLSL 核心修复】：精调数值对齐 HLSL 阴影参数
-            # Face: HLSL _ToonStep=0.5, _ToonFeather=0.0001 (极高硬度切边)
-            # Hair/Body: HLSL _ToonStep=0.4, _ToonFeather=0.001
-            # -------------------------------------------------------------
+            # 柔和丝滑过渡：告别 0.98 硬切割带来的粗糙脏阴影
             if part_key == "face":
-                mtoon.shading_shift_factor = -0.10
-                mtoon.shading_toony_factor = 0.98  # 对齐 0.0001 羽化
+                mtoon.shading_shift_factor = 0.05
+                mtoon.shading_toony_factor = 0.55
                 mtoon.gi_equalization_factor = 0.0
             elif part_key == "hair":
-                mtoon.shading_shift_factor = -0.05
-                mtoon.shading_toony_factor = 0.95  # 对齐 0.001 羽化
+                mtoon.shading_shift_factor = -0.12
+                mtoon.shading_toony_factor = 0.72
                 mtoon.gi_equalization_factor = 0.0
             else:  # bdy (衣服、身体)
-                mtoon.shading_shift_factor = -0.05
-                mtoon.shading_toony_factor = 0.92
+                mtoon.shading_shift_factor = -0.12
+                mtoon.shading_toony_factor = 0.68
                 mtoon.gi_equalization_factor = 0.0
 
             # 关闭描边

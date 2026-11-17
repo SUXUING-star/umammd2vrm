@@ -2,7 +2,7 @@ import os
 
 import bpy
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 
 def run(texture_dir):
@@ -138,14 +138,23 @@ def run(texture_dir):
             out_diff_path = os.path.join(temp_dir, f"tex_{part}_lit_color_vrm.png")
             diff_img.save(out_diff_path)
 
-            # B. 提取 base.r 阴影推移图 (Shading Shift)
-            # HLSL 物理含义: base.r 是 HalfLambert 的乘算系数 (1.0=受光, 0.0=锁死阴影)
-            if base_path and os.path.exists(base_path):
+            # B. 提取 base.r 阴影推移图（仅当存在独立 base 遮罩且不是脸部时，先高斯模糊去噪并收窄幅度）
+            if (
+                base_path
+                and base_path != diff_path
+                and os.path.exists(base_path)
+                and part != "face"
+            ):
                 base_img = Image.open(base_path).convert("RGBA")
                 base_arr = np.array(base_img, dtype=np.float32)
 
-                shading_shift_arr = base_arr[:, :, 0].astype(np.uint8)
-                shift_img = Image.fromarray(shading_shift_arr, mode="L")
+                # 把 0~255 压缩进柔和区间 [64, 192] 并平滑掉低模接缝与压缩杂点
+                r_chan = np.clip(
+                    128.0 + (base_arr[:, :, 0] - 128.0) * 0.5, 0, 255
+                ).astype(np.uint8)
+                shift_img = Image.fromarray(r_chan, mode="L").filter(
+                    ImageFilter.GaussianBlur(radius=2.5)
+                )
                 shift_out = os.path.join(temp_dir, f"tex_{part}_shading_shift_vrm.png")
                 shift_img.save(shift_out)
 
