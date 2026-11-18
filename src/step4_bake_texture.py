@@ -165,16 +165,13 @@ def run(texture_dir):
                 shad_img = Image.open(shad_path).convert("RGBA")
                 shad_img.save(shade_out)
             else:
-                # -------------------------------------------------------------
-                # 【HLSL 核心修复】：缺失 shad_c 时的降级阴影公式
-                # 修正：绝不能拿 base.r 乘 diff！改为应用 HLSL 的冷色调压暗矩阵
-                # -------------------------------------------------------------
-                cool_dark_tint = np.array(
-                    [0.72, 0.70, 0.80], dtype=np.float32
-                )  # HLSL _ToonDarkColor 默认冷灰色调
-                shade_rgb = (
-                    diff_arr[:, :, :3] * cool_dark_tint[np.newaxis, np.newaxis, :]
-                )
+                if part in ("face", "skin"):
+                    # 皮肤/脸部使用暖红橙色暗部矩阵，避免发灰发脏
+                    shade_tint = np.array([0.92, 0.76, 0.74], dtype=np.float32)
+                else:
+                    shade_tint = np.array([0.78, 0.76, 0.84], dtype=np.float32)
+
+                shade_rgb = diff_arr[:, :, :3] * shade_tint[np.newaxis, np.newaxis, :]
                 shade_arr = np.dstack([shade_rgb, diff_arr[:, :, 3]])
                 shade_img = Image.fromarray(
                     np.clip(shade_arr, 0, 255).astype(np.uint8), mode="RGBA"

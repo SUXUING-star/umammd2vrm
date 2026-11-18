@@ -5,15 +5,13 @@ import bpy
 
 def load_img(texture_dir, filename, colorspace="sRGB"):
     temp_path = os.path.join(texture_dir, "vrm_temp_baked", filename)
-    if os.path.exists(temp_path):
-        fpath = temp_path
-    else:
-        fpath = os.path.join(texture_dir, filename)
+    fpath = (
+        temp_path if os.path.exists(temp_path) else os.path.join(texture_dir, filename)
+    )
 
     if os.path.exists(fpath):
         img = bpy.data.images.load(fpath, check_existing=True)
         try:
-            # 严格规范色彩空间：色彩图用 sRGB，数据推移图用 Non-Color
             img.colorspace_settings.name = colorspace
         except Exception:
             pass
@@ -22,35 +20,44 @@ def load_img(texture_dir, filename, colorspace="sRGB"):
     return None
 
 
-def run(texture_dir):
-    print(">>> [步骤 5] 绑定 VRM MToon 材质 (已根据 HLSL 硬切与 Step 参数对齐)...")
+def find_existing_base_image(mat):
+    """兜底方案：针对通用 MMD 模型，直接读取原材质节点中的 Base Color 贴图"""
+    if not mat or not mat.use_nodes or not mat.node_tree:
+        return None
+    for node in mat.node_tree.nodes:
+        if node.type == "BSDF_PRINCIPLED":
+            inp = node.inputs.get("Base Color")
+            if inp and inp.is_linked:
+                src = inp.links[0].from_node
+                if src.type == "TEX_IMAGE" and src.image:
+                    return src.image
+    for node in mat.node_tree.nodes:
+        if node.type == "TEX_IMAGE" and node.image:
+            return node.image
+    return None
 
-    if not os.path.exists(texture_dir):
-        print(f"❌ 贴图目录不存在: {texture_dir}")
-        return
+
+def run(texture_dir):
+    print(">>> [步骤 5] 绑定 VRM MToon 材质 (已针对平滑皮肤/柔和交界优化)...")
 
     parts = ["bdy", "face", "hair", "tail"]
-
     imgs = {}
-    for part in parts:
-        imgs[part] = {
-            "lit_color": load_img(
-                texture_dir, f"tex_{part}_lit_color_vrm.png", colorspace="sRGB"
-            ),
-            "shade_color": load_img(
-                texture_dir,
-                f"tex_{part}_shade_color_vrm.png",
-                colorspace="sRGB",
-            ),
-            "shading_shift": load_img(
-                texture_dir,
-                f"tex_{part}_shading_shift_vrm.png",
-                colorspace="Non-Color",
-            ),
-            "emissive": load_img(
-                texture_dir, f"tex_{part}_emissive_baked.png", colorspace="sRGB"
-            ),
-        }
+    if texture_dir and os.path.exists(texture_dir):
+        for part in parts:
+            imgs[part] = {
+                "lit_color": load_img(
+                    texture_dir, f"tex_{part}_lit_color_vrm.png", "sRGB"
+                ),
+                "shade_color": load_img(
+                    texture_dir, f"tex_{part}_shade_color_vrm.png", "sRGB"
+                ),
+                "shading_shift": load_img(
+                    texture_dir, f"tex_{part}_shading_shift_vrm.png", "Non-Color"
+                ),
+                "emissive": load_img(
+                    texture_dir, f"tex_{part}_emissive_baked.png", "sRGB"
+                ),
+            }
 
     ALLOW_ALPHA_KEYWORDS = [
         "lash",
@@ -72,19 +79,20 @@ def run(texture_dir):
         mat_name = mat.name.lower()
         is_transparent = any(kw in mat_name for kw in ALLOW_ALPHA_KEYWORDS)
 
-        # 匹配对应部位主贴图
         part_key = None
         if "eye" in mat_name and not any(
             kw in mat_name for kw in ["brow", "lash", "line", "shadow"]
         ):
             part_key = "eye"
-        elif "mayu" in mat_name or "face" in mat_name or "kao" in mat_name:
+        elif any(kw in mat_name for kw in ["mayu", "face", "kao", "顔"]):
             part_key = "face"
-        elif "hair" in mat_name or "kami" in mat_name:
+        elif any(kw in mat_name for kw in ["skin", "hada", "肌", "素体"]):
+            part_key = "skin"
+        elif any(kw in mat_name for kw in ["hair", "kami", "髪"]):
             part_key = "hair"
-        elif "tail" in mat_name or "shippo" in mat_name:
+        elif any(kw in mat_name for kw in ["tail", "shippo"]):
             part_key = "tail"
-        elif "bdy" in mat_name or "body" in mat_name or "karada" in mat_name:
+        elif any(kw in mat_name for kw in ["bdy", "body", "karada", "体"]):
             part_key = "bdy"
 
         lit_img = None
@@ -92,19 +100,23 @@ def run(texture_dir):
         shift_img = None
         emissive_img = None
 
-        if part_key == "eye":
-            lit_img = load_img(
-                texture_dir, "tex_eye_baked_perfect.png", colorspace="sRGB"
-            )
+        if part_key == "eye" and texture_dir:
+            lit_img = load_img(texture_dir, "tex_eye_baked_perfect.png", "sRGB")
             shade_img = lit_img
-        elif part_key and part_key in imgs:
+        elif part_key in imgs:
             lit_img = imgs[part_key]["lit_color"]
             shade_img = imgs[part_key]["shade_color"]
             shift_img = imgs[part_key]["shading_shift"]
             emissive_img = imgs[part_key]["emissive"]
+        elif part_key == "skin" and "bdy" in imgs:
+            lit_img = imgs["bdy"]["lit_color"]
+            shade_img = imgs["bdy"]["shade_color"]
 
+        # 兜底：普通 MMD 模型没有按部位拆分的烘焙图时，保留其原有贴图并转为 MToon
         if not lit_img:
-            continue
+            lit_img = find_existing_base_image(mat)
+            if not lit_img:
+                continue
 
         try:
             bpy.ops.vrm.add_mtoon_material_group(material_name=mat.name)
@@ -116,18 +128,15 @@ def run(texture_dir):
             gltf = ext.mtoon1
             gltf.enabled = True
 
-            # 1. 固有色 (Lit Color)
             gltf.pbr_metallic_roughness.base_color_factor = (1.0, 1.0, 1.0, 1.0)
             gltf.pbr_metallic_roughness.base_color_texture.index.source = lit_img
 
-            # 2. 自发光 (Emissive)
             if emissive_img:
                 gltf.emissive_texture.index.source = emissive_img
                 gltf.emissive_factor = (1.0, 1.0, 1.0)
             else:
                 gltf.emissive_factor = (0.0, 0.0, 0.0)
 
-            # 透明度模式
             if is_transparent:
                 gltf.alpha_mode = "MASK"
                 gltf.alpha_cutoff = 0.5
@@ -136,38 +145,43 @@ def run(texture_dir):
 
             gltf.double_sided = True
 
-            # 3. 驱动 MToon 1.0 着色器参数
             mtoon = gltf.extensions.vrmc_materials_mtoon
 
-            # 【暗部阴影贴图】
-            if shade_img:
+            # 1. 暗部颜色配置
+            if shade_img and shade_img != lit_img:
                 mtoon.shade_multiply_texture.index.source = shade_img
                 mtoon.shade_color_factor = (1.0, 1.0, 1.0)
             else:
                 mtoon.shade_multiply_texture.index.source = lit_img
-                mtoon.shade_color_factor = (0.72, 0.70, 0.80)
+                if part_key in ("face", "skin"):
+                    mtoon.shade_color_factor = (
+                        0.92,
+                        0.76,
+                        0.74,
+                    )  # 暖肉色阴影，拒绝发灰
+                else:
+                    mtoon.shade_color_factor = (0.80, 0.78, 0.85)
 
-            # 【阴影推移图 (Non-Color)】：脸部不绑定推移图，其他部位只给 0.25 柔和权重
-            if shift_img and part_key != "face":
+            # 2. 阴影推移图：纯脸部/皮肤不绑推移图，避免压缩噪点破坏光滑感
+            if shift_img and part_key not in ("face", "skin"):
                 mtoon.shading_shift_texture.index.source = shift_img
                 if hasattr(mtoon.shading_shift_texture, "scale"):
-                    mtoon.shading_shift_texture.scale = 0.25
+                    mtoon.shading_shift_texture.scale = 0.12
 
-            # 柔和丝滑过渡：告别 0.98 硬切割带来的粗糙脏阴影
-            if part_key == "face":
-                mtoon.shading_shift_factor = 0.05
-                mtoon.shading_toony_factor = 0.55
-                mtoon.gi_equalization_factor = 0.0
+            # 3. 核心：软化明暗交界 + 拉高 GI 均等化
+            if part_key in ("face", "skin"):
+                mtoon.shading_shift_factor = 0.12
+                mtoon.shading_toony_factor = 0.22
+                mtoon.gi_equalization_factor = 0.90
             elif part_key == "hair":
-                mtoon.shading_shift_factor = -0.12
-                mtoon.shading_toony_factor = 0.72
-                mtoon.gi_equalization_factor = 0.0
-            else:  # bdy (衣服、身体)
-                mtoon.shading_shift_factor = -0.12
-                mtoon.shading_toony_factor = 0.68
-                mtoon.gi_equalization_factor = 0.0
+                mtoon.shading_shift_factor = 0.0
+                mtoon.shading_toony_factor = 0.55
+                mtoon.gi_equalization_factor = 0.75
+            else:  # bdy 及其他
+                mtoon.shading_shift_factor = 0.05
+                mtoon.shading_toony_factor = 0.38
+                mtoon.gi_equalization_factor = 0.80
 
-            # 关闭描边
             mtoon.outline_width_mode = "none"
 
-    print("✅ [步骤 5] 材质配置完毕，已按 HLSL 数学公式完成参数对齐！")
+    print("✅ [步骤 5] 材质配置完毕，皮肤已切换为柔光卡通过渡！")
