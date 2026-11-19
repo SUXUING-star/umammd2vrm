@@ -1,44 +1,15 @@
+# UmaViewer Waves MMD to VRM 1.0 Converter
 
-# UmaViewer MMD to VRM 1.0 Converter
+A Blender Python pipeline for converting MMD models exported from into VRM 1.0 avatars.
 
-A Blender Python pipeline for converting MMD models exported from [UmaViewer](https://github.com/katboi01/UmaViewer) into VRM 1.0 avatars.
-
+The repository is target to UmaViewer MMD Models Structure.It's for personal, educational, and non-commercial purposes
 ---
-
-## Project Structure
-
-```text
-vrm_scripts/
-├── blender.py                       # Entry script loaded in Blender Text Editor
-├── README.md
-├── src/                             # Core pipeline scripts
-│   ├── main.py                      # Pipeline controller & path resolver
-│   ├── step0_clean.py               # Mesh cleanup & normal protection
-│   ├── step1_skeleton.py            # Bone renaming & Humanoid mapping
-│   ├── step2_expressions.py         # Shape key prefix cleanup
-│   ├── step3_bind_vrm.py            # VRM expression binding & morph purging
-│   ├── step4_bake_texture.py        # Texture baking & channel compositing
-│   ├── step5_mtoon_materials.py     # MToon material setup & shading adjustments
-│   ├── step6_metadata.py            # VRM 1.0 metadata injection
-│   └── utils.py                     # Common utility functions
-│
-└── public/                          # Model workspace
-    ├── Agnes digital/
-    │   ├── Agnes Digital.blend
-    │   ├── config.json              # Model configuration
-    │   └── Texture2D/
-    │
-    └── <Your Model Folder>/
-        ├── <Your Model>.blend
-        ├── config.json
-        └── Texture2D/
-```
 
 ---
 
 ## Requirements
 
-1. **Blender** (3.6+ or 4.x recommended)
+1. **Blender** (4 ~ 5.2)
 2. **Required Add-ons:**
    * **[mmd_tools](https://github.com/powup333/blender_mmd_tools)**
    * **[VRM Add-on for Blender](https://vrm-addon-for-blender.info/en/)**
@@ -54,6 +25,7 @@ Each character directory in `public/` requires a `config.json` next to the `.ble
     "jp_name": "メジロブライト",
     "en_name": "Mejiro Bright",
     "texture_dir": "Texture2D",
+    "vrma_path": ["./motion.vrma"],
     "scripts_dir": "src",
     "metadata": {
         "vrm_name": "Mejiro Bright",
@@ -74,7 +46,7 @@ Each character directory in `public/` requires a `config.json` next to the `.ble
         "credit_notation": "required",
         "allow_redistribution": false,
         "modification": "prohibited"
-    }
+  }
 }
 ```
 
@@ -82,9 +54,9 @@ Each character directory in `public/` requires a `config.json` next to the `.ble
 
 ## Usage
 
-1. **Import PMX:** Import the `.pmx` model into Blender using `mmd_tools` and convert materials to Principled BSDF. Save the `.blend` file in `public/<Your Model Folder>/`.
-2. **Verify Setup:** Ensure `config.json` and `Texture2D/` are in the same folder as the `.blend` file.
-3. **Run Pipeline:** Open `blender.py` in Blender's Text Editor and click **Run Script** (`Alt + P`).
+1. **Import PMX:** Import the `.pmx` model into Blender using `mmd_tools` and convert materials to Principled BSDF. Save the `.blend` file.
+2. **Verify Setup:** Ensure `config.json` and `Texture2D/`(or other name) are in the same folder as the `.blend` file.
+3. **Run Pipeline:** Open `blender.py` in Text Editor and edit the code path(the repsitory clone path),then you just copy the `blender.py` into the Blender's Text Editor,and click **Run Script** (`Alt + P`).
 4. **Export VRM:** Check mappings in the VRM tab on the Blender sidebar (`N`), then click **Export VRM 1.0**.
 
 ---
@@ -98,3 +70,4 @@ Each character directory in `public/` requires a `config.json` next to the `.ble
 * **`step4_bake_texture.py`**: Bakes stacked eye highlights and packs texture channels into `vrm_temp_baked/`.
 * **`step5_mtoon_materials.py`**: Converts materials to MToon shaders and adjusts face shading offsets and GI strength.
 * **`step6_metadata.py`**: Writes license, author, and permission fields into the VRM 1.0 metadata.
+* **`step_vrma.py`**: (Optional) Add VRMA motion into model.
