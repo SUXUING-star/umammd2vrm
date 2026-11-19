@@ -3,7 +3,6 @@
 A Blender Python pipeline for converting MMD models exported from into VRM 1.0 avatars.
 
 The repository is target to UmaViewer MMD Models Structure.It's for personal, educational, and non-commercial purposes
----
 
 ---
 
@@ -63,10 +62,10 @@ Each character directory in `public/` requires a `config.json` next to the `.ble
 
 ## Pipeline Overview
 
-* **`step0_clean.py`**: Clears split normals on body/clothes, preserves custom smooth face normals, and removes vertex color artifacts around the mouth.
-* **`step1_skeleton.py`**: Strips unused MMD dummy bones and maps bones to VRM Humanoid definitions.
+* **`step0_clean.py`**: Processes split normals on body/clothes, and removes vertex color artifacts around the mouth.
+* **`step1_skeleton.py`**: Processes MMD non-uniform(different lang, jp,cn,en,etc) or unused bones and maps bones to VRM Humanoid English definitions.
 * **`step2_expressions.py`**: Removes numeric prefixes from shape key names.
-* **`step3_bind_vrm.py`**: Maps shape keys to VRM expression presets (`aa`, `blink`, `happy`, etc.) and deletes unused morphs/NLA tracks.
+* **`step3_bind_vrm.py`**: Maps shape keys to VRM expression presets and deletes unused morphs/NLA tracks.
 * **`step4_bake_texture.py`**: Bakes stacked eye highlights and packs texture channels into `vrm_temp_baked/`.
 * **`step5_mtoon_materials.py`**: Converts materials to MToon shaders and adjusts face shading offsets and GI strength.
 * **`step6_metadata.py`**: Writes license, author, and permission fields into the VRM 1.0 metadata.
