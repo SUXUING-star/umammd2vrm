@@ -321,8 +321,7 @@ def _classify_spring_part(name: str) -> str:
     return "other"
 
 
-def _compute_joint_params(bone_name, rb_obj, joint_obj, t_chain=0.5, seg_len=0.05):
-    part = _classify_spring_part(bone_name)
+def _extract_mmd_joint_hints(rb_obj, joint_obj):
     hit_radius = 0.010
     if rb_obj is not None:
         shape, dims, _ = _get_mmd_rigid_dimensions(rb_obj)
@@ -331,7 +330,7 @@ def _compute_joint_params(bone_name, rb_obj, joint_obj, t_chain=0.5, seg_len=0.0
             if shape in ("SPHERE", "CAPSULE")
             else min(dims[0], dims[1], dims[2])
         )
-        hit_radius = max(0.005, min(0.018, float(raw_r) * 0.40))
+        hit_radius = max(0.005, min(0.016, float(raw_r) * 0.35))
 
     mmd_sp = 0.0
     if joint_obj is not None:
@@ -340,35 +339,49 @@ def _compute_joint_params(bone_name, rb_obj, joint_obj, t_chain=0.5, seg_len=0.0
             mmd_sp = sum(abs(float(x)) for x in mmd_j.spring_angular) / 3.0
 
     sp_norm = min(1.0, math.log10(1.0 + mmd_sp) / 2.5) if mmd_sp > 0.0 else 0.35
+    return float(hit_radius), float(sp_norm)
 
-    # 使用真实骨段长度（不再用 0.015/0.55 强行抬高微骨刚度），确保所有关节 alpha60 严格 <= 0.65
-    true_len = max(0.004, float(seg_len))
-    len_scale = max(0.08, min(1.0, true_len / 0.10))
+
+def _compute_damped_joint_params(
+    bone_name, hit_radius, sp_norm, t_chain=0.5, seg_len=0.05
+):
+    """按临界/微过阻尼公式解算参数，保证 20~60fps 启动与静息态无过冲震荡。"""
+    part = _classify_spring_part(bone_name)
+    true_len = max(0.005, float(seg_len))
+    len_scale = max(0.05, min(1.0, true_len / 0.10))
     t = max(0.0, min(1.0, float(t_chain)))
 
     if part == "bust":
-        alpha_target = 0.62 + 0.06 * sp_norm
-        drag_force = 0.68
-        gravity_power = 0.010 * len_scale
+        alpha_target = 0.21 + 0.03 * sp_norm
+        drag_force = 0.86
+        gravity_power = 0.0
     elif part == "bangs":
-        alpha_target = (0.60 - 0.18 * t) + 0.04 * sp_norm
-        drag_force = 0.62 + 0.06 * t
-        gravity_power = 0.015 * len_scale
+        alpha_target = (0.21 - 0.06 * t) + 0.03 * sp_norm
+        drag_force = 0.82 + 0.04 * t
+        gravity_power = 0.0
     elif part == "hair":
-        alpha_target = (0.56 - 0.18 * t) + 0.04 * sp_norm
-        drag_force = 0.60 + 0.08 * t
-        gravity_power = 0.025 * len_scale
+        alpha_target = (0.19 - 0.05 * t) + 0.03 * sp_norm
+        drag_force = 0.78 + 0.06 * t
+        gravity_power = 0.008 * len_scale
     elif part == "skirt":
-        alpha_target = (0.60 - 0.20 * t) + 0.04 * sp_norm
-        drag_force = 0.62 + 0.06 * t
-        gravity_power = 0.030 * len_scale
+        alpha_target = (0.21 - 0.06 * t) + 0.03 * sp_norm
+        drag_force = 0.80 + 0.05 * t
+        gravity_power = 0.010 * len_scale
     else:
-        alpha_target = (0.54 - 0.18 * t) + 0.04 * sp_norm
-        drag_force = 0.60 + 0.08 * t
-        gravity_power = 0.025 * len_scale
+        alpha_target = (0.19 - 0.05 * t) + 0.03 * sp_norm
+        drag_force = 0.80 + 0.05 * t
+        gravity_power = 0.008 * len_scale
 
-    stiffness = max(0.12, min(2.60, true_len * alpha_target * 60.0))
+    # 严格随真实骨长线性缩放，不再设置 0.12 下限以免短骨 alpha60 爆表
+    stiffness = max(0.01, min(2.00, true_len * alpha_target * 60.0))
     return float(hit_radius), float(stiffness), float(drag_force), float(gravity_power)
+
+
+def _compute_joint_params(bone_name, rb_obj, joint_obj, t_chain=0.5, seg_len=0.05):
+    hit_radius, sp_norm = _extract_mmd_joint_hints(rb_obj, joint_obj)
+    return _compute_damped_joint_params(
+        bone_name, hit_radius, sp_norm, t_chain, seg_len
+    )
 
 
 def _collect_linear_chains(roots, physics_bones):
@@ -503,12 +516,15 @@ def snapshot_mmd_physics_to_armature(armature_obj=None, overwrite=False):
                     if j_idx + 1 < len(ch)
                     else (b.tail_local - b.head_local).length
                 )
+                hit_r, sp_norm = _extract_mmd_joint_hints(None, None)
                 j_list.append(
                     {
                         "bone": b.name,
+                        "hit_radius": hit_r,
+                        "sp_norm": sp_norm,
                         "params": list(
-                            _compute_joint_params(
-                                b.name, None, None, j_idx / chain_len, seg_len
+                            _compute_damped_joint_params(
+                                b.name, hit_r, sp_norm, j_idx / chain_len, seg_len
                             )
                         ),
                     }
@@ -606,12 +622,15 @@ def snapshot_mmd_physics_to_armature(armature_obj=None, overwrite=False):
                 if j_idx + 1 < len(ch)
                 else (b.tail_local - b.head_local).length
             )
+            hit_r, sp_norm = _extract_mmd_joint_hints(rb_obj, j_obj)
             joint_specs.append(
                 {
                     "bone": b.name,
+                    "hit_radius": hit_r,
+                    "sp_norm": sp_norm,
                     "params": list(
-                        _compute_joint_params(
-                            b.name, rb_obj, j_obj, j_idx / chain_len, seg_len
+                        _compute_damped_joint_params(
+                            b.name, hit_r, sp_norm, j_idx / chain_len, seg_len
                         )
                     ),
                 }
@@ -756,7 +775,7 @@ def _probe_bone_collider_basis(col, armature_obj, bone_name, is_capsule, cache):
 
 
 def apply_mmd_spring_snapshot_to_vrm(armature_obj, rename_map=None, overwrite=True):
-    """按最终骨骼名重映射，按 (mmd组, 骨骼) 细粒度建碰撞组并对每条弹簧链单独屏蔽静息穿插碰撞。"""
+    """按最终骨骼名重映射，剔除零长度退化关节，按临界阻尼重算参数并屏蔽静息穿插碰撞。"""
     if not armature_obj or SNAPSHOT_PROP not in armature_obj:
         return 0, 0
     ext = getattr(armature_obj.data, "vrm_addon_extension", None)
@@ -849,14 +868,14 @@ def apply_mmd_spring_snapshot_to_vrm(armature_obj, rename_map=None, overwrite=Tr
                 if is_cap
                 else p_a_world
             )
-            col_r_world = float(spec["radius"]) * avg_arm_scale
+            final_r = max(0.008, float(spec["radius"]))
+            col_r_world = final_r * avg_arm_scale
 
             col = _create_vrm1_collider_entry(armature_obj, bname)
             o0, basis_inv = _probe_bone_collider_basis(
                 col, armature_obj, bname, is_cap, basis_cache
             )
             off_a = basis_inv @ (p_a_world - o0)
-            final_r = max(0.008, float(spec["radius"]))
 
             if is_cap:
                 off_b = basis_inv @ (p_b_world - o0)
@@ -919,7 +938,7 @@ def apply_mmd_spring_snapshot_to_vrm(armature_obj, rename_map=None, overwrite=Tr
             getattr(cg, "vrm_name", getattr(cg, "name", cg_name)),
         )
 
-    # 3. 建立 Springs，并逐链检查与各个 (grp_key, bone_name) 碰撞组是否在静息态重叠
+    # 3. 建立 Springs，过滤零长度退化关节并按真实 seg_len 重算阻尼参数
     raw_center = snap.get("center_bone", "")
     center_bone = resolve_bone(raw_center) if raw_center else ""
     if center_bone not in bones:
@@ -929,47 +948,77 @@ def apply_mmd_spring_snapshot_to_vrm(armature_obj, rename_map=None, overwrite=Tr
     created_springs = 0
     total_joints = 0
     masked_overlap_links = 0
+    dropped_zero_joints = 0
 
     for idx, sp_spec in enumerate(snap.get("springs", [])):
         valid_joints = []
         seen_b = set()
         for j_spec in sp_spec.get("joints", []):
             bname = resolve_bone(j_spec["bone"])
-            if bname in bones and bname not in seen_b:
-                seen_b.add(bname)
-                valid_joints.append((bname, j_spec["params"]))
+            if bname not in bones or bname in seen_b:
+                continue
+            if valid_joints:
+                prev_b = bones[valid_joints[-1]["bone"]]
+                curr_b = bones[bname]
+                if (curr_b.head_local - prev_b.head_local).length < 0.005:
+                    dropped_zero_joints += 1
+                    continue
+            seen_b.add(bname)
+            valid_joints.append(
+                {
+                    "bone": bname,
+                    "hit_radius": j_spec.get("hit_radius", j_spec["params"][0]),
+                    "sp_norm": j_spec.get("sp_norm", 0.35),
+                }
+            )
         if len(valid_joints) < 2:
             continue
 
-        # 该链在静息姿态下实际受碰撞的节点位置（j1..jn + 末梢 tail）
-        moving_pts = []
-        for idx_j in range(1, len(valid_joints)):
-            jb = bones[valid_joints[idx_j][0]]
-            j_hit_r = valid_joints[idx_j - 1][1][0] * avg_arm_scale
-            moving_pts.append((arm_mat @ jb.head_local, j_hit_r))
-        last_b = bones[valid_joints[-1][0]]
-        if (last_b.tail_local - last_b.head_local).length > 1e-4:
-            moving_pts.append(
-                (arm_mat @ last_b.tail_local, valid_joints[-1][1][0] * avg_arm_scale)
+        # 根据最终过滤后的真实链长与 seg_len 重算临界阻尼参数
+        chain_len = max(1, len(valid_joints) - 1)
+        resolved_joints = []
+        for idx_j, j_info in enumerate(valid_joints):
+            bname = j_info["bone"]
+            b = bones[bname]
+            if idx_j + 1 < len(valid_joints):
+                nb = bones[valid_joints[idx_j + 1]["bone"]]
+                seg_len = (nb.head_local - b.head_local).length
+            else:
+                prev_b = bones[valid_joints[idx_j - 1]["bone"]]
+                seg_len = (b.head_local - prev_b.head_local).length
+            params = _compute_damped_joint_params(
+                bname,
+                j_info["hit_radius"],
+                j_info["sp_norm"],
+                idx_j / chain_len,
+                seg_len,
             )
+            resolved_joints.append((bname, params))
+
+        # 仅检测在 VRM 1.0 中实际受碰撞推挤的尾节点（j1..jn）
+        moving_pts = []
+        for idx_j in range(1, len(resolved_joints)):
+            jb = bones[resolved_joints[idx_j][0]]
+            j_hit_r = resolved_joints[idx_j - 1][1][0] * avg_arm_scale
+            moving_pts.append((arm_mat @ jb.head_local, j_hit_r))
 
         sp = sb1.springs.add()
-        sp_name = f"Spring_{valid_joints[0][0]}_{idx}"
+        sp_name = f"Spring_{resolved_joints[0][0]}_{idx}"
         if hasattr(sp, "vrm_name"):
             sp.vrm_name = sp_name
         elif hasattr(sp, "name"):
             sp.name = sp_name
 
-        cat = _classify_spring_part(valid_joints[0][0])
+        cat = _classify_spring_part(resolved_joints[0][0])
         cat_counts[cat] = cat_counts.get(cat, 0) + 1
 
-        local_center = pick_local_center(cat, valid_joints[0][0])
+        local_center = pick_local_center(cat, resolved_joints[0][0])
         if local_center and local_center not in seen_b:
             if hasattr(sp, "center") and hasattr(sp.center, "bone_name"):
                 sp.center.bone_name = local_center
 
         sp.joints.clear()
-        for bname, params in valid_joints:
+        for bname, params in resolved_joints:
             j = sp.joints.add()
             if hasattr(j, "node") and hasattr(j.node, "bone_name"):
                 j.node.bone_name = bname
@@ -990,7 +1039,6 @@ def apply_mmd_spring_snapshot_to_vrm(armature_obj, rename_map=None, overwrite=Tr
         for grp_key in sp_spec.get("groups", []):
             for subkey in sorted(grp_to_subkeys.get(grp_key, set())):
                 recs = col_records_by_subkey.get(subkey, [])
-                # 检测该细粒度碰撞组是否在静息态就穿插了当前链，若有穿插则仅对该链屏蔽（模拟 MMD nonCollisionJointTable）
                 overlaps = False
                 for rec in recs:
                     for pt_w, j_hit_r in moving_pts:
@@ -999,7 +1047,7 @@ def apply_mmd_spring_snapshot_to_vrm(armature_obj, rename_map=None, overwrite=Tr
                             if rec["is_cap"]
                             else (pt_w - rec["p_a"]).length
                         )
-                        if d_w < rec["r_world"] + j_hit_r + 0.012:
+                        if d_w < rec["r_world"] + j_hit_r + 0.015:
                             overlaps = True
                             break
                     if overlaps:
@@ -1029,23 +1077,20 @@ def apply_mmd_spring_snapshot_to_vrm(armature_obj, rename_map=None, overwrite=Tr
         c_name = getattr(getattr(sp, "center", None), "bone_name", "") or "None"
         centers_stat[c_name] = centers_stat.get(c_name, 0) + 1
         j_list = list(sp.joints)
-        for i_j, j in enumerate(j_list):
-            b = bones.get(j.node.bone_name)
-            if not b:
+        for i_j in range(len(j_list) - 1):
+            b = bones.get(j_list[i_j].node.bone_name)
+            nb = bones.get(j_list[i_j + 1].node.bone_name)
+            if not b or not nb:
                 continue
-            if i_j + 1 < len(j_list) and j_list[i_j + 1].node.bone_name in bones:
-                nb = bones[j_list[i_j + 1].node.bone_name]
-                sl = (nb.head_local - b.head_local).length
-            else:
-                sl = (b.tail_local - b.head_local).length
+            sl = (nb.head_local - b.head_local).length
             seg_lens.append(sl)
             if sl > 1e-4:
-                alphas.append(j.stiffness / (60.0 * sl))
+                alphas.append(j_list[i_j].stiffness / (60.0 * sl))
 
     sl_str = f"[{min(seg_lens):.3f}, {max(seg_lens):.3f}]" if seg_lens else "[]"
     al_str = f"[{min(alphas):.2f}, {max(alphas):.2f}]" if alphas else "[]"
     print(
-        f"   🌸 [SpringBone 写入] springs={created_springs} 条（joints={total_joints} 个, 分布={cat_counts}, "
+        f"   🌸 [SpringBone 写入] springs={created_springs} 条（joints={total_joints} 个, 过滤零长={dropped_zero_joints} 个, 分布={cat_counts}, "
         f"seg_len={sl_str}, alpha60={al_str}, center={centers_stat}），"
         f"colliders={col_count} 个，colliderGroups={len(subkey_to_cg_ref)} 组，静息穿插免碰屏蔽={masked_overlap_links} 对。"
     )
