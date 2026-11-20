@@ -11,14 +11,12 @@ def get_armature_and_shape_meshes():
     mesh_objs = []
     seen = set()
 
-    # 1. 先收集骨骼直接子级中的带形态键网格
     for child in armature_obj.children:
         if child.type == "MESH" and child.data and child.data.shape_keys:
             if len(child.data.shape_keys.key_blocks) > 1:
                 mesh_objs.append(child)
                 seen.add(child.name)
 
-    # 2. 兜底收集通过 Armature 修改器绑定到该骨骼的其他网格
     for obj in bpy.data.objects:
         if (
             obj.name in seen
@@ -58,7 +56,6 @@ def run():
             # 剥离如 "001." / "01_" / 前后空格
             clean_name = re.sub(r"^\d+[\._\-\s]+", "", key.name).strip()
             if clean_name and clean_name != key.name:
-                # 防止改名冲突导致 Blender 自动追加 .001
                 if clean_name not in existing_names:
                     existing_names.discard(key.name)
                     key.name = clean_name

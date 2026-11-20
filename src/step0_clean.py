@@ -5,12 +5,14 @@ import bmesh
 import bpy
 from mathutils import Vector, kdtree
 
+from step0_mat_map import classify_surface_for_normals, extract_material_base_image
+from step0_springbone import snapshot_mmd_physics_to_armature
+
 
 def snapshot_custom_normals(mesh):
-    """备份每个 Loop 的原始法线，用于保护非皮肤/硬边区域"""
-    if hasattr(mesh, "corner_normals"):  # Blender 4.1+
+    if hasattr(mesh, "corner_normals"):
         loop_normals = [Vector(cn.vector) for cn in mesh.corner_normals]
-    else:  # Blender 3.x ~ 4.0
+    else:
         mesh.calc_normals_split()
         loop_normals = [Vector(l.normal) for l in mesh.loops]
 
@@ -29,7 +31,6 @@ def snapshot_custom_normals(mesh):
 
 
 def restore_custom_normals(mesh, kd, orig_loop_normals):
-    """还原非皮肤区域的原始自定义法线"""
     if hasattr(mesh, "use_auto_smooth"):
         mesh.use_auto_smooth = True
 
@@ -48,65 +49,13 @@ def restore_custom_normals(mesh, kd, orig_loop_normals):
     mesh.update()
 
 
-def classify_poly_surface(obj_name_low, mat_name_low):
-    """按材质名（兜底对象名）区分需要法线重构的区域"""
-    target = mat_name_low or obj_name_low
-
-    EXCLUDE_KW = (
-        "eye",
-        "lash",
-        "mayu",
-        "brow",
-        "eyeline",
-        "tooth",
-        "teeth",
-        "tongue",
-        "mouth_in",
-        "hair",
-        "kami",
-        "ribbon",
-        "metal",
-        "button",
-        "shoe",
-        "boot",
-        "cloth",
-        "wear",
-        "dress",
-        "skirt",
-        "jacket",
-        "瞳",
-        "目",
-        "睫",
-        "眉",
-        "歯",
-        "舌",
-        "髪",
-        "靴",
-        "服",
-    )
-    if any(kw in target for kw in EXCLUDE_KW):
-        return "other"
-
-    if any(kw in target for kw in ("face", "kao", "cheek", "顔")):
-        return "face_skin"
-
-    if any(kw in target for kw in ("skin", "hada", "naked", "肌", "素体")):
-        return "body_skin"
-
-    if any(kw in target for kw in ("bdy", "body", "karada", "体")):
-        return "body_mixed"
-
-    return "other"
-
-
 def get_head_bone_local_z(obj):
-    """查找头部骨骼在当前网格局部空间中的 Z 高度，用于区分脸部和脖子"""
     armature = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
     if not armature:
         return None
     for bone in armature.data.bones:
         b_low = bone.name.lower()
-        if "head" in b_low or "頭" in bone.name:
+        if "head" in b_low or "頭" in bone.name or "头" in bone.name:
             world_pos = armature.matrix_world @ bone.head_local
             local_pos = obj.matrix_world.inverted() @ world_pos
             return local_pos.z
@@ -114,14 +63,9 @@ def get_head_bone_local_z(obj):
 
 
 def compute_proxy_smooth_normals(orig_obj, poly_indices, iterations):
-    """
-    复制无 Shape Keys 的代理网格，锁死开口/材质边界顶点，
-    通过位置平滑修改器抹平低模三角面凹凸后，返回 1-to-1 对应顶点的平滑法线。
-    """
     orig_mesh = orig_obj.data
     poly_set = set(poly_indices)
 
-    # 统计目标组顶点以及组外/开口边界顶点（边界顶点锁死位置不参与平滑收缩）
     bm = bmesh.new()
     bm.from_mesh(orig_mesh)
     bm.faces.ensure_lookup_table()
@@ -137,24 +81,20 @@ def compute_proxy_smooth_normals(orig_obj, poly_indices, iterations):
         in_group_faces = [f for f in edge.link_faces if f.index in poly_set]
         if not in_group_faces:
             continue
-        # 开口边界（如眼眶、嘴唇、颈口）或与非目标面交界：锁死
         if len(edge.link_faces) == 1 or len(in_group_faces) < len(edge.link_faces):
             pinned_verts.add(edge.verts[0].index)
             pinned_verts.add(edge.verts[1].index)
     bm.free()
 
-    # 创建临时代理对象（保留严格 1-to-1 顶点索引）
     proxy_mesh = orig_mesh.copy()
     proxy_obj = bpy.data.objects.new("__tmp_norm_proxy__", proxy_mesh)
     bpy.context.scene.collection.objects.link(proxy_obj)
 
     try:
-        # 1. 清除代理上的 Shape Keys（保留 Basis 形状）
         if proxy_obj.data.shape_keys:
             for kb in list(proxy_obj.data.shape_keys.key_blocks)[::-1]:
                 proxy_obj.shape_key_remove(kb)
 
-        # 2. 清除旧自定义法线与锐边标记，强制全平滑
         bpy.context.view_layer.objects.active = proxy_obj
         try:
             bpy.ops.object.mode_set(mode="OBJECT")
@@ -171,7 +111,6 @@ def compute_proxy_smooth_normals(orig_obj, poly_indices, iterations):
             if hasattr(e, "use_edge_sharp"):
                 e.use_edge_sharp = False
 
-        # 3. 写入光滑权重组（内部顶点=1.0，边界顶点=0.0）
         vg = proxy_obj.vertex_groups.new(name="__smooth_mask__")
         interior_verts = [v for v in group_verts if v not in pinned_verts]
         if interior_verts:
@@ -179,7 +118,6 @@ def compute_proxy_smooth_normals(orig_obj, poly_indices, iterations):
         if pinned_verts:
             vg.add(list(pinned_verts), 0.0, "REPLACE")
 
-        # 4. 对代理网格做几何位置松弛
         mod = proxy_obj.modifiers.new(name="SmoothProxy", type="SMOOTH")
         mod.factor = 0.5
         mod.iterations = iterations
@@ -198,7 +136,6 @@ def compute_proxy_smooth_normals(orig_obj, poly_indices, iterations):
                 for v_idx in poly.vertices:
                     vert_acc[v_idx] += area_n
 
-            # 按原网格空间坐标合并未焊接的 UV 缝法线
             co_groups = defaultdict(list)
             for v_idx in group_verts:
                 co = orig_mesh.vertices[v_idx].co
@@ -228,7 +165,6 @@ def compute_proxy_smooth_normals(orig_obj, poly_indices, iterations):
 
 
 def apply_face_ellipsoid_blend(orig_obj, face_vert_normals, blend=0.65):
-    """对头部/脸部顶点叠加坡度平滑的椭球法线（脖子保持平滑圆柱法线）"""
     if not face_vert_normals:
         return face_vert_normals
 
@@ -255,7 +191,7 @@ def apply_face_ellipsoid_blend(orig_obj, face_vert_normals, blend=0.65):
 
     rx = max(half.x, 1e-4)
     ry = max(half.y, 1e-4)
-    rz = max(half.z * 1.25, 1e-4)  # 垂直略拉长，额头与脸颊过渡更平顺
+    rz = max(half.z * 1.25, 1e-4)
 
     out = dict(face_vert_normals)
     for v_idx in target_verts:
@@ -266,7 +202,6 @@ def apply_face_ellipsoid_blend(orig_obj, face_vert_normals, blend=0.65):
         n_sphere = ellip.normalized()
         n_proxy = face_vert_normals[v_idx]
 
-        # 软过渡权重：靠近颈部边界渐弱 + 防止口腔/鼻孔内壁法线翻转
         height_fade = 1.0
         if head_z is not None:
             height_fade = max(
@@ -293,17 +228,26 @@ def repair_skin_normals(obj):
         mesh.calc_normals_split()
         loop_normals = [tuple(l.normal) for l in mesh.loops]
 
-    obj_name_low = obj.name.lower()
-    groups = {"face_skin": [], "body_skin": [], "body_mixed": []}
+    # 预先缓存每个材质槽对应的表面类型（结合材质名 + 贴图名）
+    slot_kinds = []
+    for mat in mesh.materials:
+        if not mat:
+            slot_kinds.append("other")
+            continue
+        b_img = extract_material_base_image(mat)
+        slot_kinds.append(
+            classify_surface_for_normals(
+                obj.name, mat.name, b_img.name if b_img else ""
+            )
+        )
 
+    groups = {"face_skin": [], "body_skin": [], "body_mixed": []}
     for p_idx, poly in enumerate(mesh.polygons):
-        mat_name_low = ""
-        if (
-            0 <= poly.material_index < len(mesh.materials)
-            and mesh.materials[poly.material_index]
-        ):
-            mat_name_low = mesh.materials[poly.material_index].name.lower()
-        kind = classify_poly_surface(obj_name_low, mat_name_low)
+        kind = (
+            slot_kinds[poly.material_index]
+            if 0 <= poly.material_index < len(slot_kinds)
+            else "other"
+        )
         if kind in groups:
             groups[kind].append(p_idx)
 
@@ -312,7 +256,6 @@ def repair_skin_normals(obj):
 
     loops = mesh.loops
 
-    # 1. 脸部皮肤：强代理平滑 + 头部椭球法线混合
     if groups["face_skin"]:
         face_vn = compute_proxy_smooth_normals(obj, groups["face_skin"], iterations=16)
         face_vn = apply_face_ellipsoid_blend(obj, face_vn, blend=0.65)
@@ -322,7 +265,6 @@ def repair_skin_normals(obj):
             for l_idx in poly.loop_indices:
                 loop_normals[l_idx] = tuple(face_vn[loops[l_idx].vertex_index])
 
-    # 2. 纯身体皮肤：中度代理平滑
     if groups["body_skin"]:
         skin_vn = compute_proxy_smooth_normals(obj, groups["body_skin"], iterations=12)
         for p_idx in groups["body_skin"]:
@@ -331,7 +273,6 @@ def repair_skin_normals(obj):
             for l_idx in poly.loop_indices:
                 loop_normals[l_idx] = tuple(skin_vn[loops[l_idx].vertex_index])
 
-    # 3. 身体+衣服混合网格（bdy）：仅平滑 <45° 曲面，保留衣领/饰品硬折痕
     if groups["body_mixed"]:
         mixed_vn = compute_proxy_smooth_normals(obj, groups["body_mixed"], iterations=5)
         cos_crease = math.cos(math.radians(55.0))
@@ -355,7 +296,6 @@ def repair_skin_normals(obj):
 
 
 def push_vertices_along_normals(obj, strength=0.0004):
-    """安全外扩顶点消除跨网格 Z-Fighting（兼容 Shape Keys，且保留修复后的法线）"""
     mesh = obj.data
     if hasattr(mesh, "corner_normals"):
         exact_normals = [tuple(cn.vector) for cn in mesh.corner_normals]
@@ -390,15 +330,48 @@ def push_vertices_along_normals(obj, strength=0.0004):
     mesh.update()
 
 
-def run():
-    print(">>> [步骤 0] 无损法线保护 + 皮肤代理法线重构 + 抗卡模处理...")
+def is_mmd_physics_or_garbage(obj):
+    if getattr(obj, "mmd_type", "NONE") in ("RIGID_BODY", "JOINT"):
+        return True
+    if obj.type == "EMPTY" and obj.name.lower() in ("joints", "rigidbodies"):
+        return True
+    if obj.parent and obj.parent.name.lower() in ("joints", "rigidbodies"):
+        return True
+    for col in obj.users_collection:
+        if col.name.lower() in ("rigidbodies", "joints"):
+            return True
+    if obj.type == "MESH":
+        name_low = obj.name.lower()
+        if any(
+            kw in name_low
+            for kw in (
+                "shadow",
+                "dummy",
+                "mmd_shadow",
+                "mmd_dummy",
+                "rigidbody",
+                "mmd_rigid",
+                "mmd_joint",
+                "cs_rigid",
+            )
+        ):
+            return True
+    return False
 
-    GARBAGE_MESH_KEYWORDS = ["shadow", "dummy", "mmd_shadow", "mmd_dummy"]
+
+def run():
+    print(">>> [步骤 0] 无损法线保护 + 皮肤代理法线重构 + 清理 mmd_tools 刚体/关节...")
+
+    # 在删除 MMD 刚体/关节前仅拍取轻量化物理快照，避免步骤 1 改名时触发 VRM 回调卡顿
+    snapshot_mmd_physics_to_armature()
+
+    removed_cnt = 0
     for obj in list(bpy.data.objects):
-        if obj.type == "MESH":
-            if any(kw in obj.name.lower() for kw in GARBAGE_MESH_KEYWORDS):
-                print(f"   🧹 清理冗余阴影/Dummy网格: [{obj.name}]")
-                bpy.data.objects.remove(obj, do_unlink=True)
+        if is_mmd_physics_or_garbage(obj):
+            bpy.data.objects.remove(obj, do_unlink=True)
+            removed_cnt += 1
+    if removed_cnt:
+        print(f"   🧹 已清理 {removed_cnt} 个冗余刚体/关节/Dummy对象")
 
     for obj in list(bpy.data.objects):
         if obj.type != "MESH" or not obj.data:
@@ -418,33 +391,35 @@ def run():
             except Exception:
                 pass
 
-        kd, orig_loop_normals = None, None
-        try:
-            kd, orig_loop_normals = snapshot_custom_normals(obj.data)
-        except Exception as e:
-            print(f"   ⚠️ 网格 [{obj.name}] 法线备份跳过: {e}")
+        has_shape_keys = bool(
+            obj.data.shape_keys and len(obj.data.shape_keys.key_blocks) > 1
+        )
 
-        try:
-            bpy.context.view_layer.objects.active = obj
-            bpy.ops.object.mode_set(mode="EDIT")
-            bpy.ops.mesh.select_all(action="SELECT")
-            bpy.ops.mesh.remove_doubles(threshold=0.00005)
-            bpy.ops.mesh.dissolve_degenerate(threshold=0.0001)
-            bpy.ops.object.mode_set(mode="OBJECT")
-        except Exception as e:
-            print(f"   ⚠️ 网格 [{obj.name}] 几何清理跳过: {e}")
+        if not has_shape_keys:
+            kd, orig_loop_normals = None, None
             try:
-                bpy.ops.object.mode_set(mode="OBJECT")
+                kd, orig_loop_normals = snapshot_custom_normals(obj.data)
             except Exception:
                 pass
-
-        if kd is not None and orig_loop_normals:
             try:
-                restore_custom_normals(obj.data, kd, orig_loop_normals)
+                bpy.context.view_layer.objects.active = obj
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.ops.mesh.select_all(action="SELECT")
+                bpy.ops.mesh.remove_doubles(threshold=0.00005)
+                bpy.ops.mesh.dissolve_degenerate(threshold=0.0001)
+                bpy.ops.object.mode_set(mode="OBJECT")
             except Exception as e:
-                print(f"   ⚠️ 网格 [{obj.name}] 法线还原跳过: {e}")
+                print(f"   ⚠️ 网格 [{obj.name}] 几何清理跳过: {e}")
+                try:
+                    bpy.ops.object.mode_set(mode="OBJECT")
+                except Exception:
+                    pass
+            if kd is not None and orig_loop_normals:
+                try:
+                    restore_custom_normals(obj.data, kd, orig_loop_normals)
+                except Exception:
+                    pass
 
-        # 重构皮肤与脸部平滑法线
         try:
             bpy.context.view_layer.objects.active = obj
             repair_skin_normals(obj)
@@ -454,18 +429,7 @@ def run():
         obj_name_lower = obj.name.lower()
         is_clothing = any(
             kw in obj_name_lower
-            for kw in [
-                "bdy",
-                "body",
-                "cloth",
-                "wear",
-                "dress",
-                "costume",
-                "jacket",
-                "skirt",
-                "top",
-                "bottom",
-            ]
+            for kw in ["cloth", "wear", "dress", "costume", "jacket", "skirt"]
         )
         is_inner_skin = any(
             kw in obj_name_lower for kw in ["skin", "inner", "naked", "kao", "face"]
@@ -477,4 +441,4 @@ def run():
             except Exception as e:
                 print(f"   ⚠️ 衣服网格 [{obj.name}] 微推失败: {e}")
 
-    print("✅ [步骤 0] 皮肤法线重构与抗卡模处理完成！")
+    print("✅ [步骤 0] 皮肤法线重构与清理完成！")
