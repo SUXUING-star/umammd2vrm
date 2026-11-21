@@ -2,7 +2,7 @@ import re
 
 import bpy
 
-from step2_expressions import get_armature_and_shape_meshes
+from step2_shapekey import get_armature_and_shape_meshes
 
 _UMA_KEY_RE = re.compile(
     r"^(EyeBrow|Eye|Mouth|Ear)_(\d+)(?:_([LR0]))?\(([^)]+)\)(?:\[([^\]]+)\])?$",

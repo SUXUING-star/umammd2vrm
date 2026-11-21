@@ -4,7 +4,7 @@ import bpy
 
 import step0_clean
 import step1_skeleton
-import step2_expressions
+import step2_shapekey
 import step3_bind_vrm
 import step4_bake_texture
 import step5_mtoon_materials
@@ -77,7 +77,7 @@ def run(config):
         ground_to_zero=ground_to_zero,
         fix_high_heel_rig=True,
     )
-    step2_expressions.run()
+    step2_shapekey.run()
     step3_bind_vrm.run()
     step4_bake_texture.run(tex)
     step5_mtoon_materials.run(tex)

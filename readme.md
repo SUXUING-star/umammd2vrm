@@ -1,8 +1,11 @@
-# UmaViewer Waves MMD to VRM 1.0 Converter
+# UmaViewer MMD to VRM 1.0 Converter
 
-A Blender Python pipeline for converting MMD models exported from into VRM 1.0 avatars.
+As we all know, manually modifying original models in Blender/VRoid Studio is a f***k*ing paiful process,and it often makes hard-to-catch bugs. 
 
-The repository is target to UmaViewer MMD Models Structure.It's for personal, educational, and non-commercial purposes
+To solve this, I developed a bpy-based pipeline to automatically convert MMD models into the VRM 1.0 format.
+
+The repository is target to [UmaViewer](https://github.com/katboi01/UmaViewer) MMD Models Structure.It's for personal, educational, and non-commercial purposes.
+([my related work](https://github.com/SUXUING-star/wwmmd2vrm))
 
 ---
 
@@ -55,18 +58,24 @@ Each character directory in `public/` requires a `config.json` next to the `.ble
 
 1. **Import PMX:** Import the `.pmx` model into Blender using `mmd_tools` and convert materials to Principled BSDF. Save the `.blend` file.
 2. **Verify Setup:** Ensure `config.json` and `Texture2D/`(or other name) are in the same folder as the `.blend` file.
-3. **Run Pipeline:** Open `blender.py` in Text Editor and edit the code path(the repsitory clone path),then you just copy the `blender.py` into the Blender's Text Editor,and click **Run Script** (`Alt + P`).
-4. **Export VRM:** Check mappings in the VRM tab on the Blender sidebar (`N`), then click **Export VRM 1.0**.
+3. **Run Pipeline:** Open `blender.py` in Text Editor and edit the code path(the repsitory clone path),then you just copy the `blender.py` into the Blender's Text Editor,and click **Run Script**,the model will export in your project path.
+4. **Check Model**: Now you got a waifu VRM model with cute material like in game finally.
+![preview](public/preview.png)
 
 ---
 
-## Pipeline Overview
+## Pipeline Description
 
-* **`step0_clean.py`**: Processes split normals on body/clothes, and removes vertex color artifacts around the mouth.
-* **`step1_skeleton.py`**: Processes MMD non-uniform(different lang, jp,cn,en,etc) or unused bones and maps bones to VRM Humanoid English definitions.
-* **`step2_expressions.py`**: Removes numeric prefixes from shape key names.
-* **`step3_bind_vrm.py`**: Maps shape keys to VRM expression presets and deletes unused morphs/NLA tracks.
-* **`step4_bake_texture.py`**: Bakes stacked eye highlights and packs texture channels into `vrm_temp_baked/`.
-* **`step5_mtoon_materials.py`**: Converts materials to MToon shaders and adjusts face shading offsets and GI strength.
-* **`step6_metadata.py`**: Writes license, author, and permission fields into the VRM 1.0 metadata.
-* **`step_vrma.py`**: (Optional) Add VRMA motion into model.
+1. **Extract Spring Bones** (Extract MMD rigid bodies & convert to VRM Spring Bones)
+<br>↓
+2. **Clean Mesh & Bones** (Fix normals, remove unused rigid bodies, joints, and auxiliary bones)
+<br>↓
+3. **Bind Expressions** (Normalize shape key names and bind to VRM Expressions)
+<br>↓
+4. **Bake Textures** (Composite eye highlights & pack UV textures)
+<br>↓
+5. **Setup Materials** (Configure VRM MToon shaders)
+<br>↓
+6. **Write Metadata** (Set VRM 1.0 metadata)
+<br>↓
+7. *(Optional)* **Inject Animation** (Import & attach animation files)
