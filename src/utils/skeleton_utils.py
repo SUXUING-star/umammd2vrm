@@ -282,12 +282,29 @@ def validate_and_assign_vrm_humanoid(armature_obj, skip_toes=False):
     return resolved
 
 
+def ensure_object_mode(obj):
+    if not obj or obj.mode == "OBJECT":
+        return
+    prev_active = bpy.context.view_layer.objects.active
+    was_hidden = obj.hide_viewport
+    if was_hidden:
+        obj.hide_viewport = False
+    try:
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.mode_set(mode="OBJECT")
+    finally:
+        if was_hidden:
+            obj.hide_viewport = True
+        bpy.context.view_layer.objects.active = prev_active
+
+
 def merge_bone_pairs_to_parent(armature_obj, child_to_parent, bound_meshes=None):
     if not child_to_parent:
         return 0
     if bound_meshes is None:
         bound_meshes = get_bound_meshes(armature_obj)
     for mesh_obj in bound_meshes:
+        ensure_object_mode(mesh_obj)  # <--- 新增：确保网格不在编辑模式
         vgs = mesh_obj.vertex_groups
         if not vgs:
             continue

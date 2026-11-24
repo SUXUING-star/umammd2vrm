@@ -23,6 +23,7 @@ from utils.skeleton_utils import (
     collect_weighted_bone_names,
     decimate_spring_chains_budgeted,
     ensure_bust_tip_bones,
+    ensure_object_mode,
     find_first_bone,
     get_bound_meshes,
     ground_model_to_z0,
@@ -49,6 +50,9 @@ def run(
         snapshot_mmd_physics_to_armature(armature_obj, overwrite=False)
 
         bound_meshes = get_bound_meshes(armature_obj)
+        ensure_object_mode(armature_obj)
+        for m in bound_meshes:
+            ensure_object_mode(m)
         weighted_bones = collect_weighted_bone_names(
             armature_obj, bound_meshes=bound_meshes
         )
