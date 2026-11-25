@@ -28,6 +28,7 @@ from utils.skeleton_utils import (
     get_bound_meshes,
     ground_model_to_z0,
     is_ancestor,
+    merge_bone_pairs_to_parent,
     merge_excess_bones_to_limit,
     resolve_torso_chain,
     safe_rename_bone,
@@ -46,7 +47,6 @@ def run(
     print(">>> [步骤 1] 规整 MMD 骨骼命名、保护弹簧骨与校验躯干/脚踝链路...")
     armature_obj = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
     if armature_obj:
-        # 若跳过了步骤 0 直接调用步骤 1，先拍取 MMD 物理快照
         snapshot_mmd_physics_to_armature(armature_obj, overwrite=False)
 
         bound_meshes = get_bound_meshes(armature_obj)
@@ -86,6 +86,24 @@ def run(
             pb.rotation_euler = (0.0, 0.0, 0.0)
             pb.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
             pb.scale = (1.0, 1.0, 1.0)
+
+        # -------------------------------------------------------------------------
+        # 0. 先将有权重的 offset 骨转移合并到它的父骨骼上（如 Ankle_offset_R -> Ankle_R）
+        # -------------------------------------------------------------------------
+        offset_merges = {}
+        for b in armature_obj.data.bones:
+            if "_offset" in b.name.lower() and b.parent:
+                offset_merges[b.name] = b.parent.name
+        if offset_merges:
+            cnt_off = merge_bone_pairs_to_parent(
+                armature_obj, offset_merges, bound_meshes=bound_meshes
+            )
+            print(
+                f"   🧹 [清理 Offset 骨] 自动将 {cnt_off} 根阻断动画链路的 Offset 骨合并到父级: {list(offset_merges.keys())}"
+            )
+            weighted_bones = collect_weighted_bone_names(
+                armature_obj, bound_meshes=bound_meshes
+            )
 
         bpy.context.view_layer.objects.active = armature_obj
         bpy.ops.object.mode_set(mode="EDIT")
@@ -144,10 +162,20 @@ def run(
                 eb.remove(eb[bn])
 
         root_b = find_first_bone(
-            eb, ("Root", "全ての親", "全ての亲", "Position", "ParentNode")
+            eb, ("Root", "全ての親", "全ての亲", "Position", "ParentNode", "root")
         )
         hips_b = find_first_bone(
-            eb, ("Hips", "Hip", "pelvis", "Bip001 Pelvis", "腰", "下半身", "LowerBody")
+            eb,
+            (
+                "Hips",
+                "Hip",
+                "pelvis",
+                "Pelvis",
+                "Bip001 Pelvis",
+                "腰",
+                "下半身",
+                "LowerBody",
+            ),
         )
         spine_b = find_first_bone(
             eb, ("Spine", "上半身", "UpperBody", "spine_01", "Bip001 Spine")
@@ -200,23 +228,31 @@ def run(
         )
 
         foot_l_b = find_first_bone(
-            eb, ("FootL", "左足首D" if use_leg_l_d else "左足首")
+            eb, ("FootL", "Ankle_L", "左足首D" if use_leg_l_d else "左足首")
         )
         foot_r_b = find_first_bone(
-            eb, ("FootR", "右足首D" if use_leg_r_d else "右足首")
+            eb, ("FootR", "Ankle_R", "右足首D" if use_leg_r_d else "右足首")
         )
-        for cand in ("左足先EX", "左つま先D", "左足先D", "左つま先", "左足先"):
+        for cand in ("Toe_L", "左足先EX", "左つま先D", "左足先D", "左つま先", "左足先"):
             if cand in eb and (not foot_l_b or is_ancestor(eb[cand], foot_l_b)):
                 rename_map[cand] = "ToesL"
                 break
-        for cand in ("右足先EX", "右つま先D", "右足先D", "右つま先", "右足先"):
+        for cand in ("Toe_R", "右足先EX", "右つま先D", "右足先D", "右つま先", "右足先"):
             if cand in eb and (not foot_r_b or is_ancestor(eb[cand], foot_r_b)):
                 rename_map[cand] = "ToesR"
                 break
 
+        # 构造大小写不敏感匹配字典，彻底通杀各种首字母大小写怪异格式
+        rename_map_lower = {k.lower(): v for k, v in rename_map.items()}
+
+        def get_renamed_target(name):
+            return rename_map.get(name) or rename_map_lower.get(name.lower())
+
         protected = (
             set(rename_map.keys()) | set(rename_map.values()) | existing_spring_bones
         )
+        protected_lower = {k.lower() for k in protected}
+
         pruned_cnt = 0
         while True:
             leaves = [
@@ -225,23 +261,25 @@ def run(
                 if len(b.children) == 0
                 and b.name not in weighted_bones
                 and b.name not in protected
+                and b.name.lower() not in protected_lower
                 and not is_physics_or_spring_bone(b.name)
                 and not (b.parent and is_physics_or_spring_bone(b.parent.name))
                 and not any(
-                    k in b.name
+                    k in b.name.lower()
                     for k in (
                         "指",
-                        "Thumb",
-                        "Index",
-                        "Middle",
-                        "Ring",
-                        "Little",
-                        "Finger",
+                        "thumb",
+                        "index",
+                        "middle",
+                        "ring",
+                        "little",
+                        "pinky",
+                        "finger",
                         "目",
-                        "Eye",
+                        "eye",
                         "足",
-                        "Toe",
-                        "Foot",
+                        "toe",
+                        "foot",
                     )
                 )
             ]
@@ -265,12 +303,12 @@ def run(
         existing = {b.name for b in armature_obj.data.bones}
         renamed = 0
         for bone in list(armature_obj.data.bones):
-            tgt = rename_map.get(bone.name)
+            tgt = get_renamed_target(bone.name)
             if not tgt or tgt == bone.name:
                 continue
             if tgt in existing:
                 occ = armature_obj.data.bones.get(tgt)
-                if occ and occ.name not in rename_map:
+                if occ and get_renamed_target(occ.name) is None:
                     tmp = f"Aux_{tgt}_old"
                     while tmp in existing:
                         tmp += "_"
@@ -414,6 +452,11 @@ def run(
                 "rightFoot",
                 "leftToes",
                 "rightToes",
+                "leftThumbProximal",
+                "leftIndexProximal",
+                "leftMiddleProximal",
+                "leftRingProximal",
+                "leftLittleProximal",
             )
             if k in assigned
         }

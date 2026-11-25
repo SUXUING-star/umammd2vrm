@@ -16,7 +16,7 @@ with open(config_path, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 # 3. 直接指定 src 绝对路径
-scripts_dir = r"E:\3dmodels\blenders\vrm_scripts\src"
+scripts_dir = r"E:\3dmodels\blenders\umammd2vrm\src"
 if scripts_dir not in sys.path:
     sys.path.insert(0, scripts_dir)
 

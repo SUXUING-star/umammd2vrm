@@ -190,11 +190,15 @@ def is_excluded_from_spring(bone_name: str) -> bool:
             "hair",
             "髪",
             "发",
+            "tail",
+            "sp_hi_",
+            "tp_hi_",
         )
     ):
         return False
     if re.search(
-        r"(?:^|[_\.\-\s])(thumb|index|middle|ring|little)(?:finger|[_\.\-\s\d]|$)", low
+        r"(?:^|[_\.\-\s])(thumb|index|middle|ring|little|pinky)(?:finger|[_\.\-\s\d]|$)",
+        low,
     ):
         return True
     if re.search(r"(?:^|[_\.\-\s])eye(?:[_\.\-\s\d]|$)", low):
@@ -206,6 +210,8 @@ def classify_spring_part(name: str) -> str:
     if is_bust_bone_name(name):
         return "bust"
     low = name.lower()
+    if any(k in low for k in ("tail", "尻尾", "尾")):
+        return "skirt"  # 尾巴复用高飘动物理参数
     if any(k in low for k in ("袖", "sleeve", "sode", "cuff")):
         return "sleeve"
     if any(
@@ -262,7 +268,6 @@ def classify_spring_part(name: str) -> str:
 
 
 def detect_model_forward_axis(bones):
-    """通过眼睛/脚尖相对头部/脚踝的 3D 向量自动判定角色真实正前方（默认 -Y）。"""
     head = next((bones[c] for c in ("Head", "頭", "头") if c in bones), None)
     eyes = [
         bones[c]
@@ -275,9 +280,16 @@ def detect_model_forward_axis(bones):
         if v.length > 0.005:
             return v.normalized()
 
-    foot = next((bones[c] for c in ("FootL", "左足首D", "左足首") if c in bones), None)
+    foot = next(
+        (bones[c] for c in ("FootL", "Ankle_L", "左足首D", "左足首") if c in bones),
+        None,
+    )
     toe = next(
-        (bones[c] for c in ("ToesL", "左つま先", "左足先", "左つま先D") if c in bones),
+        (
+            bones[c]
+            for c in ("ToesL", "Toe_L", "左つま先", "左足先", "左つま先D")
+            if c in bones
+        ),
         None,
     )
     if foot and toe:
@@ -295,7 +307,6 @@ def detect_model_forward_axis(bones):
 
 
 def classify_chain_part_spatial(chain_bones, bones, fwd_dir):
-    """结合骨骼名与 3D 前/侧/后空间位置区分前发、前裙摆、侧裙摆、后裙摆、袖子。"""
     base = classify_spring_part(chain_bones[0].name)
     if base in ("bust", "sleeve"):
         return base
@@ -343,7 +354,17 @@ def classify_chain_part_spatial(chain_bones, bones, fwd_dir):
             return "front_skirt"
         if any(
             k in names_low
-            for k in ("back", "ushiro", "後", "后", "后裙", "披风", "cape", "マント")
+            for k in (
+                "back",
+                "ushiro",
+                "後",
+                "后",
+                "后裙",
+                "披风",
+                "cape",
+                "マント",
+                "tail",
+            )
         ):
             return "skirt"
         if hips_b:
@@ -419,6 +440,8 @@ def is_valid_body_collider_bone(bone_name):
             "センター",
             "center",
             "groove",
+            "tail",
+            "ctrl",
         )
     ):
         return False
@@ -543,7 +566,6 @@ def get_mmd_rigid_dimensions(rb_obj):
 
 
 def compute_collider_armature_spec(armature_obj, target_bone_name, rb_obj):
-    """记录碰撞体在 Armature 空间下相对于 bone.head_local 的偏移，完全脱离 bone.matrix_local 旋转。"""
     bone = armature_obj.data.bones.get(target_bone_name)
     if not bone:
         return None
@@ -633,7 +655,6 @@ def compute_collider_armature_spec(armature_obj, target_bone_name, rb_obj):
 
 
 def extract_mmd_joint_hints(rb_obj, joint_obj, part="other"):
-    # 增大布料/前发防穿模缓冲半径，避免 8mm 细球在腿手快速运动时被瞬间穿过
     if part in ("front_skirt", "side_skirt", "skirt"):
         hit_radius = 0.025
     elif part == "sleeve":
@@ -788,7 +809,6 @@ def create_vrm1_collider_entry(armature_obj, bone_name):
 
 
 def probe_bone_collider_basis(col, armature_obj, bone_name, is_capsule, cache):
-    """实测该骨骼下 col.shape.*.offset 到 Blender 世界坐标的基矩阵，保证 0 位置偏差。"""
     key = (bone_name, "Capsule" if is_capsule else "Sphere")
     if key in cache:
         return cache[key]
